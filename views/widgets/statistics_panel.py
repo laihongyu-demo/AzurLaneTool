@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QGroupBox, QMessageBox
+    QGroupBox, QMessageBox, QCheckBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 
@@ -16,6 +16,9 @@ from services.statistics_service import StatisticsService
 from services.user_service import UserService
 from views.widgets.stat_card import StatCard
 from utils.exceptions import DatabaseError
+from utils.error_handler import handleException
+from utils.formatters import formatNumber
+from utils.logger import log
 
 
 class StatisticsPanel(QWidget):
@@ -60,14 +63,17 @@ class StatisticsPanel(QWidget):
         commander_stats_layout = QHBoxLayout()
         commander_stats_layout.setSpacing(15)
 
-        self._commanderLevelCard = StatCard("指挥官等级", "-", clickable=True) # 格式："指挥官等级（当前经验/需求经验）"
+        self._commanderLevelCard = StatCard("指挥官等级", "-", clickable=True)
         self._dutyDaysCard = StatCard("执勤天数", "-")
-        self._expEfficiencyCard = StatCard("指级效率", "-") # ≥10000采用千进制显示且保留一位小数（示例：10000->10.0k）
+        self._expEfficiencyCard = StatCard("指级效率", "-")
+        self._cubeCard = StatCard("魔方", "-", clickable=True)
+        self._redGemCard = StatCard("红尖尖", "-", clickable=True)
 
         commander_stats_layout.addWidget(self._commanderLevelCard)
         commander_stats_layout.addWidget(self._dutyDaysCard)
         commander_stats_layout.addWidget(self._expEfficiencyCard)
-        commander_stats_layout.addStretch()
+        commander_stats_layout.addWidget(self._cubeCard)
+        commander_stats_layout.addWidget(self._redGemCard)
 
         commander_layout.addLayout(commander_stats_layout)
         layout.addWidget(commander_group)
@@ -82,11 +88,13 @@ class StatisticsPanel(QWidget):
         self._unlockedCard = StatCard("已解锁", "0")
         self._lockedCard = StatCard("未解锁", "0")
         self._rateCard = StatCard("收藏率", "0%")
+        self._oathRateCard = StatCard("誓约率", "0%")
 
         unlock_stats_layout.addWidget(self._totalCard)
         unlock_stats_layout.addWidget(self._unlockedCard)
         unlock_stats_layout.addWidget(self._lockedCard)
         unlock_stats_layout.addWidget(self._rateCard)
+        unlock_stats_layout.addWidget(self._oathRateCard)
 
         unlock_layout.addLayout(unlock_stats_layout)
         layout.addWidget(unlock_group)
@@ -110,7 +118,7 @@ class StatisticsPanel(QWidget):
         tp_layout.addLayout(tp_stats_layout)
         layout.addWidget(tp_group)
 
-        bulin_group = QGroupBox("杂项数据看板")
+        bulin_group = QGroupBox("需求看板")
         bulin_layout = QVBoxLayout(bulin_group)
 
         bulin_stats_layout = QHBoxLayout()
@@ -119,19 +127,27 @@ class StatisticsPanel(QWidget):
         self._universalBulinCard = StatCard("泛用型布里", "0")
         self._trialBulinCard = StatCard("试作型布里MKII", "0")
         self._specializedBulinCard = StatCard("特装型布里MKIII", "0")
-        self._cubeCard = StatCard("魔方", "-", clickable=True) # ≥10000采用千进制显示且保留一位小数（示例：10000->10.0k）
-        self._redGemCard = StatCard("红尖尖", "-", clickable=True) # ≥10000采用千进制显示且保留一位小数（示例：10000->10.0k）
+        self._materialDemandCard = StatCard("物资需求", "-", clickable=True)
+        self._mindUnitDemandCard = StatCard("心智单元需求", "-", clickable=True)
+        self._mindUnit2DemandCard = StatCard("心智单元Ⅱ需求", "-", clickable=True)
 
         bulin_stats_layout.addWidget(self._universalBulinCard)
         bulin_stats_layout.addWidget(self._trialBulinCard)
         bulin_stats_layout.addWidget(self._specializedBulinCard)
-        bulin_stats_layout.addWidget(self._cubeCard)
-        bulin_stats_layout.addWidget(self._redGemCard)
+        bulin_stats_layout.addWidget(self._materialDemandCard)
+        bulin_stats_layout.addWidget(self._mindUnitDemandCard)
+        bulin_stats_layout.addWidget(self._mindUnit2DemandCard)
 
         bulin_layout.addLayout(bulin_stats_layout)
         layout.addWidget(bulin_group)
 
         button_layout = QHBoxLayout()
+        self._mindCalcBtn = QPushButton("心智计算")
+        self._mindCalcBtn.setMinimumWidth(100)
+        self._mindCalcBtn.setMinimumHeight(35)
+        self._includePhase5CheckBox = QCheckBox("包含认知觉醒II")
+        button_layout.addWidget(self._mindCalcBtn)
+        button_layout.addWidget(self._includePhase5CheckBox)
         button_layout.addStretch()
         self._refreshBtn = QPushButton("刷新统计")
         self._refreshBtn.setMinimumWidth(120)
@@ -144,53 +160,61 @@ class StatisticsPanel(QWidget):
     def _connectSignals(self) -> None:
         """连接信号与槽。"""
         self._refreshBtn.clicked.connect(self._onRefreshClicked)
+        self._mindCalcBtn.clicked.connect(self._onMindCalcClicked)
         self._commanderLevelCard.clicked.connect(self._onCommanderLevelClicked)
         self._cubeCard.clicked.connect(self._onCubeClicked)
         self._redGemCard.clicked.connect(self._onRedGemClicked)
+        self._materialDemandCard.clicked.connect(self._onMaterialDemandClicked)
+        self._mindUnitDemandCard.clicked.connect(self._onMindUnitDemandClicked)
+        self._mindUnit2DemandCard.clicked.connect(self._onMindUnit2DemandClicked)
 
     def _onRefreshClicked(self) -> None:
         """刷新按钮点击事件处理。"""
         self.refreshData()
         self.dataRefreshed.emit()
 
-    def _onCommanderLevelClicked(self) -> None:
-        """
-        指挥官等级卡片点击事件处理。
+    def _onMindCalcClicked(self) -> None:
+        """心智计算按钮点击事件处理。"""
+        try:
+            include_phase5 = self._includePhase5CheckBox.isChecked()
+            result = self._statistics_service.calculateMindRequirements(include_phase5)
 
-        TODO: 后续实现指挥官等级详细信息的业务逻辑
-        """
-        QMessageBox.information(
-            self,
-            "提示",
-            "开发中",
-            QMessageBox.Ok
-        )
+            self._materialDemandCard.setValue(formatNumber(result["material_demand"]))
+            self._mindUnitDemandCard.setValue(formatNumber(result["mind_unit_demand"]))
+            self._mindUnit2DemandCard.setValue(formatNumber(result["mind_unit2_demand"]))
+
+            log.debug("心智计算完成")
+
+        except DatabaseError as e:
+            message = handleException(self, e, "数据库错误", "心智计算失败")
+            QMessageBox.critical(self, "数据库错误", message)
+        except Exception as e:
+            message = handleException(self, e, "错误", "心智计算失败")
+            QMessageBox.critical(self, "错误", message)
+
+    def _onCommanderLevelClicked(self) -> None:
+        """指挥官等级卡片点击事件处理。"""
+        QMessageBox.information(self, "提示", "开发中")
 
     def _onCubeClicked(self) -> None:
-        """
-        魔方卡片点击事件处理。
-
-        TODO: 后续实现魔方详细信息的业务逻辑
-        """
-        QMessageBox.information(
-            self,
-            "提示",
-            "开发中",
-            QMessageBox.Ok
-        )
+        """魔方卡片点击事件处理。"""
+        QMessageBox.information(self, "提示", "开发中")
 
     def _onRedGemClicked(self) -> None:
-        """
-        红尖尖卡片点击事件处理。
+        """红尖尖卡片点击事件处理。"""
+        QMessageBox.information(self, "提示", "开发中")
 
-        TODO: 后续实现红尖尖详细信息的业务逻辑
-        """
-        QMessageBox.information(
-            self,
-            "提示",
-            "开发中",
-            QMessageBox.Ok
-        )
+    def _onMaterialDemandClicked(self) -> None:
+        """物资需求卡片点击事件处理。"""
+        QMessageBox.information(self, "提示", "开发中")
+
+    def _onMindUnitDemandClicked(self) -> None:
+        """心智单元需求卡片点击事件处理。"""
+        QMessageBox.information(self, "提示", "开发中")
+
+    def _onMindUnit2DemandClicked(self) -> None:
+        """心智单元Ⅱ需求卡片点击事件处理。"""
+        QMessageBox.information(self, "提示", "开发中")
 
     def refreshData(self) -> None:
         """刷新统计数据。"""
@@ -211,6 +235,10 @@ class StatisticsPanel(QWidget):
             self._lockedCard.setValue(locked_text)
             self._rateCard.setValue(rate_text)
 
+            oath_stats = stats.get("oath", {})
+            oath_rate_text = f"{oath_stats.get('oath_rate', 0):.1f}%"
+            self._oathRateCard.setValue(oath_rate_text)
+
             tp_stats = stats.get("tp", {})
             total_tp = tp_stats.get("total_tp", 0)
             unlocked_tp = tp_stats.get("unlocked_tp", 0)
@@ -228,10 +256,14 @@ class StatisticsPanel(QWidget):
             remaining_leveling = stats.get("remaining_leveling", 0)
             self._remainingLevelingCard.setValue(str(remaining_leveling))
 
+            log.debug("统计数据刷新完成")
+
         except DatabaseError as e:
-            self._showError(f"数据库错误: {e}")
+            message = handleException(self, e, "数据库错误", "加载统计数据失败")
+            self._showError(message)
         except Exception as e:
-            self._showError(f"刷新数据失败: {e}")
+            message = handleException(self, e, "错误", "刷新统计数据失败")
+            self._showError(message)
 
     def _showError(self, message: str) -> None:
         """显示错误信息。"""
@@ -239,6 +271,7 @@ class StatisticsPanel(QWidget):
         self._unlockedCard.setValue("错误")
         self._lockedCard.setValue("错误")
         self._rateCard.setValue("错误")
+        self._oathRateCard.setValue("错误")
         self._totalTpCard.setValue("错误")
         self._unlockedTpCard.setValue("错误")
         self._tpRateCard.setValue("错误")

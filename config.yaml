@@ -1,0 +1,23 @@
+# 碧蓝航线数据管理工具配置文件
+
+# 应用配置
+app:
+  name: "AzurLaneTool"
+  version: "1.0.0"
+
+# 数据库配置
+database:
+  name: "AzurLaneStatisticalOfficeDB.db"
+  path: "data"
+
+# 窗口配置
+window:
+  min_width: 800
+  min_height: 600
+  default_width: 1024
+  default_height: 768
+
+# 系统配置
+system:
+  max_retry_count: 3
+  query_timeout: 30
