@@ -23,3 +23,8 @@ class ValidationError(Exception):
 class ConfigurationError(Exception):
     """配置相关异常。"""
     pass
+
+
+class SecurityError(Exception):
+    """安全相关异常。"""
+    pass
