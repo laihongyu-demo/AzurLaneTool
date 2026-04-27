@@ -48,18 +48,18 @@ class StatCard(QPushButton):
         self.setFixedSize(150, 80)
         self.setStyleSheet("""
             QPushButton {
-                background-color: #f5f5f5;
+                background-color: transparent;
                 border: 1px solid #ddd;
                 border-radius: 8px;
                 text-align: center;
                 padding: 5px;
             }
             QPushButton:hover {
-                background-color: #e8e8e8;
+                background-color: rgba(0, 0, 0, 0.05);
                 border-color: #ccc;
             }
             QPushButton:pressed {
-                background-color: #d5d5d5;
+                background-color: rgba(0, 0, 0, 0.1);
             }
         """)
 
@@ -82,7 +82,7 @@ class StatCard(QPushButton):
             self.setEnabled(False)
             self.setStyleSheet("""
                 QPushButton {
-                    background-color: #f5f5f5;
+                    background-color: transparent;
                     border: 1px solid #ddd;
                     border-radius: 8px;
                     text-align: center;
