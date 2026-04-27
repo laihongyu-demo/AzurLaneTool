@@ -33,9 +33,11 @@ def main() -> int:
     app.setStyleSheet("""
         QLabel {
             background-color: transparent;
+            border: none;
         }
         QGroupBox {
             background-color: transparent;
+            border: none;
         }
     """)
 

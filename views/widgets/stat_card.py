@@ -49,14 +49,12 @@ class StatCard(QPushButton):
         self.setStyleSheet("""
             QPushButton {
                 background-color: transparent;
-                border: 1px solid #ddd;
-                border-radius: 8px;
+                border: none;
                 text-align: center;
                 padding: 5px;
             }
             QPushButton:hover {
                 background-color: rgba(0, 0, 0, 0.05);
-                border-color: #ccc;
             }
             QPushButton:pressed {
                 background-color: rgba(0, 0, 0, 0.1);
@@ -83,8 +81,7 @@ class StatCard(QPushButton):
             self.setStyleSheet("""
                 QPushButton {
                     background-color: transparent;
-                    border: 1px solid #ddd;
-                    border-radius: 8px;
+                    border: none;
                     text-align: center;
                     padding: 5px;
                 }
