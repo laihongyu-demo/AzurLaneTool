@@ -54,10 +54,10 @@ class StatCard(QPushButton):
                 padding: 5px;
             }
             QPushButton:hover {
-                background-color: rgba(0, 0, 0, 0.05);
+                background-color: transparent;
             }
             QPushButton:pressed {
-                background-color: rgba(0, 0, 0, 0.1);
+                background-color: transparent;
             }
         """)
 
@@ -71,7 +71,7 @@ class StatCard(QPushButton):
 
         self._valueLabel = QLabel(self._value)
         self._valueLabel.setAlignment(Qt.AlignCenter)
-        self._valueLabel.setStyleSheet("font-size: 18px; font-weight: bold; color: #333; border: none; background: transparent;")
+        self._valueLabel.setStyleSheet("font-size: 18px; color: #333; border: none; background: transparent;")
 
         layout.addWidget(self._titleLabel)
         layout.addWidget(self._valueLabel)

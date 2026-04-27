@@ -31,6 +31,10 @@ def main() -> int:
     app.setApplicationName(APP_NAME)
     
     app.setStyleSheet("""
+        * {
+            font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
+            font-weight: normal;
+        }
         QLabel {
             background-color: transparent;
             border: none;

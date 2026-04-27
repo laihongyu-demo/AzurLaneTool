@@ -73,7 +73,7 @@ class MainWindow(QMainWindow):
 
         header_layout = QHBoxLayout()
         self._titleLabel = QLabel("碧蓝航线数据管理工具")
-        self._titleLabel.setStyleSheet("font-size: 26px; font-weight: bold;")
+        self._titleLabel.setStyleSheet("font-size: 26px;")
         header_layout.addWidget(self._titleLabel)
         header_layout.addStretch()
         main_layout.addLayout(header_layout)
