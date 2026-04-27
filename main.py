@@ -29,6 +29,20 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    
+    app.setStyleSheet("""
+        * {
+            font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
+            font-weight: normal;
+        }
+        QLabel {
+            background-color: transparent;
+            border: none;
+        }
+        QGroupBox {
+            background-color: transparent;
+        }
+    """)
 
     if not os.path.exists(DEFAULT_DB_PATH):
         print(f"警告: 数据库文件不存在: {DEFAULT_DB_PATH}")
