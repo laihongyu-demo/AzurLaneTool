@@ -67,7 +67,7 @@ class StatCard(QPushButton):
 
         self._titleLabel = QLabel(self._title)
         self._titleLabel.setAlignment(Qt.AlignCenter)
-        self._titleLabel.setStyleSheet("font-size: 12px; color: #666; border: none; background: transparent;")
+        self._titleLabel.setStyleSheet("font-size: 19px; color: #000000; border: none; background: transparent;")
 
         self._valueLabel = QLabel(self._value)
         self._valueLabel.setAlignment(Qt.AlignCenter)
