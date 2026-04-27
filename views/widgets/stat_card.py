@@ -48,18 +48,16 @@ class StatCard(QPushButton):
         self.setFixedSize(150, 80)
         self.setStyleSheet("""
             QPushButton {
-                background-color: #f5f5f5;
-                border: 1px solid #ddd;
-                border-radius: 8px;
+                background-color: transparent;
+                border: none;
                 text-align: center;
                 padding: 5px;
             }
             QPushButton:hover {
-                background-color: #e8e8e8;
-                border-color: #ccc;
+                background-color: transparent;
             }
             QPushButton:pressed {
-                background-color: #d5d5d5;
+                background-color: transparent;
             }
         """)
 
@@ -69,11 +67,11 @@ class StatCard(QPushButton):
 
         self._titleLabel = QLabel(self._title)
         self._titleLabel.setAlignment(Qt.AlignCenter)
-        self._titleLabel.setStyleSheet("font-size: 12px; color: #666; border: none; background: transparent;")
+        self._titleLabel.setStyleSheet("font-size: 12px; font-family: \"SimHei\", \"黑体\", sans-serif; color: #000000; border: none; background: transparent;")
 
         self._valueLabel = QLabel(self._value)
         self._valueLabel.setAlignment(Qt.AlignCenter)
-        self._valueLabel.setStyleSheet("font-size: 18px; font-weight: bold; color: #333; border: none; background: transparent;")
+        self._valueLabel.setStyleSheet("font-size: 18px; color: #333; border: none; background: transparent;")
 
         layout.addWidget(self._titleLabel)
         layout.addWidget(self._valueLabel)
@@ -82,9 +80,8 @@ class StatCard(QPushButton):
             self.setEnabled(False)
             self.setStyleSheet("""
                 QPushButton {
-                    background-color: #f5f5f5;
-                    border: 1px solid #ddd;
-                    border-radius: 8px;
+                    background-color: transparent;
+                    border: none;
                     text-align: center;
                     padding: 5px;
                 }
