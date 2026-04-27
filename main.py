@@ -37,7 +37,6 @@ def main() -> int:
         }
         QGroupBox {
             background-color: transparent;
-            border: none;
         }
     """)
 
