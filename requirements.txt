@@ -1,0 +1,19 @@
+# DataInsight - 环境依赖配置
+# Python >= 3.8
+
+# GUI 框架
+PyQt5>=5.15.0
+
+# 数据库
+# SQLite 为 Python 内置模块，无需额外安装
+
+# 数据可视化（可选，按需启用）
+# PyQtChart>=5.15.0
+# matplotlib>=3.5.0
+
+# 开发工具
+flake8>=5.0.0
+black>=23.0.0
+
+# 打包工具
+pyinstaller>=5.0.0
