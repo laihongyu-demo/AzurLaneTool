@@ -9,18 +9,33 @@ from typing import Optional
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PyQt5.QtCore import pyqtSignal
 
+from services.resource_management_service import ResourceManagementService
+
 
 class ResourceManagementPanel(QWidget):
     """
     资源管理面板控件。
 
     提供游戏道具资源库存管理功能的界面交互。
+    当前为框架预留，后续将实现具体功能。
     """
 
     dataRefreshed = pyqtSignal()
 
-    def __init__(self, parent: QWidget = None):
+    def __init__(
+        self,
+        service: Optional[ResourceManagementService] = None,
+        parent: QWidget = None
+    ):
+        """
+        初始化资源管理面板。
+
+        Args:
+            service: 资源管理服务实例。
+            parent: 父控件。
+        """
         super().__init__(parent)
+        self._service = service or ResourceManagementService()
         self._initUi()
         self._connectSignals()
 
