@@ -56,9 +56,11 @@ class StatisticsPanel(QWidget):
 
         commander_group = QGroupBox("指挥官看板")
         commander_layout = QVBoxLayout(commander_group)
+        commander_layout.setContentsMargins(15, 20, 15, 20)
+        commander_layout.setSpacing(10)
 
         commander_stats_layout = QHBoxLayout()
-        commander_stats_layout.setSpacing(15)
+        commander_stats_layout.setSpacing(0)
 
         self._commanderLevelCard = StatCard("指挥官等级", "-", clickable=True) # 格式："指挥官等级（当前经验/需求经验）"
         self._dutyDaysCard = StatCard("执勤天数", "-")
@@ -66,10 +68,15 @@ class StatisticsPanel(QWidget):
         self._cubeCard = StatCard("魔方", "-", clickable=True) # ≥10000采用千进制显示且保留一位小数（示例：10000->10.0k）
         self._redGemCard = StatCard("红尖尖", "-", clickable=True) # ≥10000采用千进制显示且保留一位小数（示例：10000->10.0k）
 
+        commander_stats_layout.addStretch()
         commander_stats_layout.addWidget(self._commanderLevelCard)
+        commander_stats_layout.addStretch()
         commander_stats_layout.addWidget(self._dutyDaysCard)
+        commander_stats_layout.addStretch()
         commander_stats_layout.addWidget(self._expEfficiencyCard)
+        commander_stats_layout.addStretch()
         commander_stats_layout.addWidget(self._cubeCard)
+        commander_stats_layout.addStretch()
         commander_stats_layout.addWidget(self._redGemCard)
         commander_stats_layout.addStretch()
 
