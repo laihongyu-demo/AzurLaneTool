@@ -15,12 +15,9 @@ from services.data_service import DataService
 from services.calc_service import CalcService
 from services.codex_unlock_service import CodexUnlockService, UnlockResult
 from services.awaken_service import AwakenService, AwakenResult
-from services.limit_break_service import LimitBreakService, LimitBreakResult
 from services.statistics_service import StatisticsService
-from services.resource_management_service import ResourceManagementService
 from views.widgets.statistics_panel import StatisticsPanel
 from views.widgets.ship_management_panel import ShipManagementPanel
-from views.widgets.resource_management_panel import ResourceManagementPanel
 from utils.constants import WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT, APP_NAME
 
 
@@ -37,9 +34,7 @@ class MainWindow(QMainWindow):
         calc_service: CalcService = None,
         unlock_service: CodexUnlockService = None,
         awaken_service: AwakenService = None,
-        limit_break_service: LimitBreakService = None,
-        statistics_service: StatisticsService = None,
-        resource_management_service: ResourceManagementService = None
+        statistics_service: StatisticsService = None
     ):
         """
         初始化主窗口。
@@ -49,18 +44,14 @@ class MainWindow(QMainWindow):
             calc_service: 计算服务实例。
             unlock_service: 解锁服务实例。
             awaken_service: 觉醒服务实例。
-            limit_break_service: 界限突破服务实例。
             statistics_service: 统计服务实例。
-            resource_management_service: 资源管理服务实例。
         """
         super().__init__()
         self._data_service = data_service or DataService()
         self._calc_service = calc_service or CalcService()
         self._unlock_service = unlock_service or CodexUnlockService()
         self._awaken_service = awaken_service or AwakenService()
-        self._limit_break_service = limit_break_service or LimitBreakService()
         self._statistics_service = statistics_service or StatisticsService()
-        self._resource_management_service = resource_management_service or ResourceManagementService()
 
         self._initUi()
         self._initMenuBar()
@@ -82,7 +73,7 @@ class MainWindow(QMainWindow):
 
         header_layout = QHBoxLayout()
         self._titleLabel = QLabel("碧蓝航线数据管理工具")
-        self._titleLabel.setStyleSheet("font-size: 26px;")
+        self._titleLabel.setStyleSheet("font-size: 26px; font-weight: bold;")
         header_layout.addWidget(self._titleLabel)
         header_layout.addStretch()
         main_layout.addLayout(header_layout)
@@ -95,15 +86,9 @@ class MainWindow(QMainWindow):
 
         self._shipManagementPanel = ShipManagementPanel(
             self._unlock_service,
-            self._awaken_service,
-            self._limit_break_service
+            self._awaken_service
         )
         self._tabWidget.addTab(self._shipManagementPanel, "舰娘管理")
-
-        self._resourceManagementPanel = ResourceManagementPanel(
-            self._resource_management_service
-        )
-        self._tabWidget.addTab(self._resourceManagementPanel, "资源管理")
 
         main_layout.addWidget(self._tabWidget)
 
@@ -143,7 +128,6 @@ class MainWindow(QMainWindow):
         self._statisticsPanel.dataRefreshed.connect(self._onStatisticsDataRefreshed)
         self._shipManagementPanel.unlockResult.connect(self._onUnlockResult)
         self._shipManagementPanel.awakenResult.connect(self._onAwakenResult)
-        self._shipManagementPanel.limitBreakResult.connect(self._onLimitBreakResult)
 
     def _onRefreshClicked(self) -> None:
         """刷新按钮点击事件处理。"""
@@ -175,15 +159,6 @@ class MainWindow(QMainWindow):
 
         Args:
             result: 觉醒结果对象。
-        """
-        self._statusBar.showMessage(result.toStatusBarMessage())
-
-    def _onLimitBreakResult(self, result: LimitBreakResult) -> None:
-        """
-        界限突破结果事件处理。
-
-        Args:
-            result: 界限突破结果对象。
         """
         self._statusBar.showMessage(result.toStatusBarMessage())
 
