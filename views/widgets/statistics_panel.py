@@ -63,10 +63,14 @@ class StatisticsPanel(QWidget):
         self._commanderLevelCard = StatCard("指挥官等级", "-", clickable=True) # 格式："指挥官等级（当前经验/需求经验）"
         self._dutyDaysCard = StatCard("执勤天数", "-")
         self._expEfficiencyCard = StatCard("指级效率", "-") # ≥10000采用千进制显示且保留一位小数（示例：10000->10.0k）
+        self._cubeCard = StatCard("魔方", "-", clickable=True) # ≥10000采用千进制显示且保留一位小数（示例：10000->10.0k）
+        self._redGemCard = StatCard("红尖尖", "-", clickable=True) # ≥10000采用千进制显示且保留一位小数（示例：10000->10.0k）
 
         commander_stats_layout.addWidget(self._commanderLevelCard)
         commander_stats_layout.addWidget(self._dutyDaysCard)
         commander_stats_layout.addWidget(self._expEfficiencyCard)
+        commander_stats_layout.addWidget(self._cubeCard)
+        commander_stats_layout.addWidget(self._redGemCard)
         commander_stats_layout.addStretch()
 
         commander_layout.addLayout(commander_stats_layout)
@@ -110,26 +114,22 @@ class StatisticsPanel(QWidget):
         tp_layout.addLayout(tp_stats_layout)
         layout.addWidget(tp_group)
 
-        bulin_group = QGroupBox("杂项数据看板")
-        bulin_layout = QVBoxLayout(bulin_group)
+        requirement_group = QGroupBox("需求数据看板")
+        requirement_layout = QVBoxLayout(requirement_group)
 
-        bulin_stats_layout = QHBoxLayout()
-        bulin_stats_layout.setSpacing(15)
+        requirement_stats_layout = QHBoxLayout()
+        requirement_stats_layout.setSpacing(15)
 
         self._universalBulinCard = StatCard("泛用型布里", "0")
         self._trialBulinCard = StatCard("试作型布里MKII", "0")
         self._specializedBulinCard = StatCard("特装型布里MKIII", "0")
-        self._cubeCard = StatCard("魔方", "-", clickable=True) # ≥10000采用千进制显示且保留一位小数（示例：10000->10.0k）
-        self._redGemCard = StatCard("红尖尖", "-", clickable=True) # ≥10000采用千进制显示且保留一位小数（示例：10000->10.0k）
 
-        bulin_stats_layout.addWidget(self._universalBulinCard)
-        bulin_stats_layout.addWidget(self._trialBulinCard)
-        bulin_stats_layout.addWidget(self._specializedBulinCard)
-        bulin_stats_layout.addWidget(self._cubeCard)
-        bulin_stats_layout.addWidget(self._redGemCard)
+        requirement_stats_layout.addWidget(self._universalBulinCard)
+        requirement_stats_layout.addWidget(self._trialBulinCard)
+        requirement_stats_layout.addWidget(self._specializedBulinCard)
 
-        bulin_layout.addLayout(bulin_stats_layout)
-        layout.addWidget(bulin_group)
+        requirement_layout.addLayout(requirement_stats_layout)
+        layout.addWidget(requirement_group)
 
         button_layout = QHBoxLayout()
         button_layout.addStretch()
