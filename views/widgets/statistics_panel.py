@@ -130,10 +130,16 @@ class StatisticsPanel(QWidget):
         self._universalBulinCard = StatCard("泛用型布里", "0")
         self._trialBulinCard = StatCard("试作型布里MKII", "0")
         self._specializedBulinCard = StatCard("特装型布里MKIII", "0")
+        self._mentalUnitCard = StatCard("心智单元", "-")
+        self._mentalUnitIICard = StatCard("心智单元Ⅱ", "-")
+        self._coinCard = StatCard("物资", "-")
 
         requirement_stats_layout.addWidget(self._universalBulinCard)
         requirement_stats_layout.addWidget(self._trialBulinCard)
         requirement_stats_layout.addWidget(self._specializedBulinCard)
+        requirement_stats_layout.addWidget(self._mentalUnitCard)
+        requirement_stats_layout.addWidget(self._mentalUnitIICard)
+        requirement_stats_layout.addWidget(self._coinCard)
 
         requirement_layout.addLayout(requirement_stats_layout)
         layout.addWidget(requirement_group)
@@ -253,6 +259,9 @@ class StatisticsPanel(QWidget):
         self._universalBulinCard.setValue("错误")
         self._trialBulinCard.setValue("错误")
         self._specializedBulinCard.setValue("错误")
+        self._mentalUnitCard.setValue("错误")
+        self._mentalUnitIICard.setValue("错误")
+        self._coinCard.setValue("错误")
 
     def updateUnlockStats(self, unlock_stats: Dict[str, Any]) -> None:
         """
