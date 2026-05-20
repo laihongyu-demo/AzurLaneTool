@@ -348,6 +348,60 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"更新舰娘觉醒等级失败: {e}")
 
+    def findLimitBreakable(self) -> List[CodexGroupModel]:
+        """
+        查询可进行界限突破的舰娘列表。
+
+        筛选条件：
+        - codex_unlock = 'Y'（已解锁）
+        - ship_group != '改造'
+        - ship_star < 对应稀有度的满星阈值
+
+        Returns:
+            可界限突破的舰娘模型列表。
+        """
+        sql = f"""
+            SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
+                   ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
+                   oath_status, codex_unlock, date_edit
+            FROM {self.TABLE_NAME}
+            WHERE ship_star < CASE
+                WHEN ship_rarity IN ('UR', 'DR', 'SSR', 'PRY') THEN 6
+                WHEN ship_rarity IN ('SR', 'R') THEN 5
+                WHEN ship_rarity = 'N' THEN 4
+                WHEN ship_rarity IN ('PR', 'E') THEN 3
+                ELSE 6
+            END
+            AND ship_group != '改造'
+            AND codex_unlock = 'Y'
+            ORDER BY ship_aid DESC, codex_id DESC
+        """
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql)
+                return [CodexGroupModel.fromDict(dict(row)) for row in cursor.fetchall()]
+        except sqlite3.Error as e:
+            raise DatabaseError(f"查询可界限突破舰娘列表失败: {e}")
+
+    def updateShipStar(self, codex_id: str, ship_star: int) -> bool:
+        """
+        更新舰娘星级。
+
+        Args:
+            codex_id: 图鉴ID。
+            ship_star: 新的星级数值。
+
+        Returns:
+            更新是否成功。
+        """
+        sql = f"UPDATE {self.TABLE_NAME} SET ship_star = ? WHERE codex_id = ?"
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql, (ship_star, codex_id))
+                return cursor.rowcount > 0
+        except sqlite3.Error as e:
+            raise DatabaseError(f"更新舰娘星级失败: {e}")
+
 
 class CodexTpRepository(BaseRepository[CodexTpModel]):
     """
@@ -525,6 +579,28 @@ class CodexTpRepository(BaseRepository[CodexTpModel]):
             "unlocked_tp": self.getUnlockedTpValue()
         }
 
+    def updateFullStarByCodexId(self, codex_id: str) -> int:
+        """
+        更新指定舰娘的满星相关TP记录。
+
+        Args:
+            codex_id: 图鉴ID。
+
+        Returns:
+            更新的记录数。
+        """
+        sql = f"""
+            UPDATE {self.TABLE_NAME}
+            SET tp_unlock = 'Y'
+            WHERE codex_id = ? AND unlock_cond = '满星'
+        """
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql, (codex_id,))
+                return cursor.rowcount
+        except sqlite3.Error as e:
+            raise DatabaseError(f"更新TP满星状态失败: {e}")
+
 
 class CodexBuffRepository(BaseRepository[CodexBuffModel]):
     """
@@ -658,3 +734,25 @@ class CodexBuffRepository(BaseRepository[CodexBuffModel]):
                 return [dict(row) for row in cursor.fetchall()]
         except sqlite3.Error as e:
             raise DatabaseError(f"查询Buff解锁详情失败: {e}")
+
+    def updateFullStarByCodexId(self, codex_id: str) -> int:
+        """
+        更新指定舰娘的满星相关Buff记录。
+
+        Args:
+            codex_id: 图鉴ID。
+
+        Returns:
+            更新的记录数。
+        """
+        sql = f"""
+            UPDATE {self.TABLE_NAME}
+            SET buff_unlock = 'Y'
+            WHERE codex_id = ? AND buff_cond = '满星'
+        """
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql, (codex_id,))
+                return cursor.rowcount
+        except sqlite3.Error as e:
+            raise DatabaseError(f"更新Buff满星状态失败: {e}")
