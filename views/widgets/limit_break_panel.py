@@ -10,13 +10,12 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QMessageBox, QGroupBox, QFormLayout
 )
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal
 
 from models.codex_model import CodexGroupModel
 from services.limit_break_service import LimitBreakService, LimitBreakResult
 from views.widgets.searchable_combo_box import SearchableComboBox
 from utils.exceptions import DatabaseError, ValidationError
-from utils.logger import log
 
 
 class LimitBreakPanel(QWidget):
@@ -29,16 +28,16 @@ class LimitBreakPanel(QWidget):
     dataRefreshed = pyqtSignal()
     limitBreakResult = pyqtSignal(object)
 
-    def __init__(self, service: LimitBreakService, parent: QWidget = None):
+    def __init__(self, limit_break_service: Optional[LimitBreakService] = None, parent: QWidget = None):
         """
         初始化界限突破面板。
 
         Args:
-            service: 界限突破服务实例。
+            limit_break_service: 界限突破服务实例。
             parent: 父控件。
         """
         super().__init__(parent)
-        self._service = service
+        self._limit_break_service = limit_break_service or LimitBreakService()
         self._limit_breakable_ships: List[CodexGroupModel] = []
         self._initUi()
         self._connectSignals()
@@ -50,8 +49,8 @@ class LimitBreakPanel(QWidget):
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(15)
 
-        group = QGroupBox("界限突破")
-        group_layout = QVBoxLayout(group)
+        limit_break_group = QGroupBox("界限突破")
+        limit_break_layout = QVBoxLayout(limit_break_group)
 
         select_layout = QHBoxLayout()
         select_label = QLabel("选择舰娘:")
@@ -61,24 +60,20 @@ class LimitBreakPanel(QWidget):
         select_layout.addWidget(select_label)
         select_layout.addWidget(self._shipComboBox)
         select_layout.addStretch()
-        group_layout.addLayout(select_layout)
+        limit_break_layout.addLayout(select_layout)
 
         info_layout = QFormLayout()
         self._shipIdLabel = QLabel("-")
-        self._shipTypeLabel = QLabel("-")
         self._shipRarityLabel = QLabel("-")
         self._shipCampLabel = QLabel("-")
-        self._shipStarLabel = QLabel("-")
-        self._maxStarLabel = QLabel("-")
+        self._currentStarLabel = QLabel("-")
 
         info_layout.addRow("图鉴ID:", self._shipIdLabel)
-        info_layout.addRow("舰船类型:", self._shipTypeLabel)
         info_layout.addRow("稀有度:", self._shipRarityLabel)
         info_layout.addRow("阵营:", self._shipCampLabel)
-        info_layout.addRow("当前星级:", self._shipStarLabel)
-        info_layout.addRow("满星:", self._maxStarLabel)
+        info_layout.addRow("当前星级:", self._currentStarLabel)
 
-        group_layout.addLayout(info_layout)
+        limit_break_layout.addLayout(info_layout)
 
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -96,9 +91,9 @@ class LimitBreakPanel(QWidget):
         self._refreshBtn.setMinimumWidth(100)
         self._refreshBtn.setMinimumHeight(35)
         button_layout.addWidget(self._refreshBtn)
-        group_layout.addLayout(button_layout)
+        limit_break_layout.addLayout(button_layout)
 
-        layout.addWidget(group)
+        layout.addWidget(limit_break_group)
         layout.addStretch()
 
     def _connectSignals(self) -> None:
@@ -118,25 +113,18 @@ class LimitBreakPanel(QWidget):
 
         ship = self._limit_breakable_ships[index]
         self._shipIdLabel.setText(str(ship.codex_id))
-        self._shipTypeLabel.setText(ship.ship_typ or "-")
         self._shipRarityLabel.setText(ship.ship_rarity or "-")
         self._shipCampLabel.setText(ship.ship_camp or "-")
-        self._shipStarLabel.setText(str(ship.ship_star))
-        
-        max_star = self._service.getMaxStar(ship.ship_rarity)
-        self._maxStarLabel.setText(str(max_star))
-        
+        self._currentStarLabel.setText(str(ship.ship_star))
         self._limitBreakBtn.setEnabled(True)
         self._limitBreakMaxBtn.setEnabled(True)
 
     def _clearShipInfo(self) -> None:
         """清空舰娘信息显示。"""
         self._shipIdLabel.setText("-")
-        self._shipTypeLabel.setText("-")
         self._shipRarityLabel.setText("-")
         self._shipCampLabel.setText("-")
-        self._shipStarLabel.setText("-")
-        self._maxStarLabel.setText("-")
+        self._currentStarLabel.setText("-")
 
     def _onLimitBreakClicked(self) -> None:
         """界限突破按钮点击事件处理。"""
@@ -145,13 +133,10 @@ class LimitBreakPanel(QWidget):
             return
 
         ship = self._limit_breakable_ships[index]
-        max_star = self._service.getMaxStar(ship.ship_rarity)
-        
         reply = QMessageBox.question(
             self,
             "确认界限突破",
-            f"确定要将舰娘 '{ship.ship_name}' 从 {ship.ship_star}星 突破到 {ship.ship_star + 1}星 吗？\n\n"
-            f"满星为 {max_star}星",
+            f"确定要对舰娘 '{ship.ship_name}' 进行界限突破吗？",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
@@ -160,7 +145,7 @@ class LimitBreakPanel(QWidget):
             return
 
         try:
-            result = self._service.limitBreak(ship.codex_id)
+            result = self._limit_break_service.limitBreak(ship.codex_id)
             self.limitBreakResult.emit(result)
             if result.success:
                 self.refreshData()
@@ -172,7 +157,6 @@ class LimitBreakPanel(QWidget):
             error_result = LimitBreakResult(success=False, message=str(e))
             self.limitBreakResult.emit(error_result)
         except Exception as e:
-            log.error(f"界限突破操作发生异常: {e}")
             error_result = LimitBreakResult(success=False, message=f"界限突破操作发生异常: {e}")
             self.limitBreakResult.emit(error_result)
 
@@ -183,13 +167,10 @@ class LimitBreakPanel(QWidget):
             return
 
         ship = self._limit_breakable_ships[index]
-        max_star = self._service.getMaxStar(ship.ship_rarity)
-        
         reply = QMessageBox.question(
             self,
             "确认界限突破·MAX",
-            f"确定要将舰娘 '{ship.ship_name}' 直接突破到满星 {max_star}星 吗？\n\n"
-            f"当前星级: {ship.ship_star}星",
+            f"确定要将舰娘 '{ship.ship_name}' 直接提升至满星吗？",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No
         )
@@ -198,7 +179,7 @@ class LimitBreakPanel(QWidget):
             return
 
         try:
-            result = self._service.limitBreakMax(ship.codex_id)
+            result = self._limit_break_service.limitBreakMax(ship.codex_id)
             self.limitBreakResult.emit(result)
             if result.success:
                 self.refreshData()
@@ -210,7 +191,6 @@ class LimitBreakPanel(QWidget):
             error_result = LimitBreakResult(success=False, message=str(e))
             self.limitBreakResult.emit(error_result)
         except Exception as e:
-            log.error(f"界限突破·MAX操作发生异常: {e}")
             error_result = LimitBreakResult(success=False, message=f"界限突破·MAX操作发生异常: {e}")
             self.limitBreakResult.emit(error_result)
 
@@ -227,17 +207,13 @@ class LimitBreakPanel(QWidget):
         self._limitBreakMaxBtn.setEnabled(False)
 
         try:
-            self._limit_breakable_ships = self._service.getLimitBreakableShips()
+            self._limit_breakable_ships = self._limit_break_service.getLimitBreakableShips()
 
             for ship in self._limit_breakable_ships:
                 display_name = str(ship.ship_name) if ship.ship_name is not None else ""
                 self._shipComboBox.addItem(display_name, ship.codex_id)
 
-            log.debug(f"界限突破数据刷新完成，共 {len(self._limit_breakable_ships)} 艘舰娘")
-            self.dataRefreshed.emit()
-
         except DatabaseError as e:
             QMessageBox.critical(self, "数据库错误", f"加载数据失败: {e}")
         except Exception as e:
-            log.error(f"刷新界限突破数据失败: {e}")
             QMessageBox.critical(self, "错误", f"刷新数据失败: {e}")

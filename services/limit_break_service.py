@@ -14,7 +14,15 @@ from repositories.codex_repository import (
 )
 from utils.db_connection import DatabaseContext
 from utils.exceptions import DatabaseError, ValidationError
-from utils.logger import log
+
+
+MAX_STAR_MAP = {
+    'UR': 6, 'DR': 6, 'SSR': 6, 'PRY': 6,
+    'SR': 5, 'R': 5,
+    'N': 6
+}
+
+MAX_STAR_DEFAULT = 6
 
 
 @dataclass
@@ -27,23 +35,15 @@ class LimitBreakResult:
         ship_name: 舰娘名称。
         old_star: 原星级。
         new_star: 新星级。
-        is_max_star: 是否达到满星。
-        tp_value: 科技点增加值。
-        buff_details: Buff详情列表。
+        is_full_star: 是否达到满星。
         message: 结果消息。
     """
     success: bool
     ship_name: str = ""
     old_star: int = 0
     new_star: int = 0
-    is_max_star: bool = False
-    tp_value: int = 0
-    buff_details: List[Dict] = None
+    is_full_star: bool = False
     message: str = ""
-
-    def __post_init__(self):
-        if self.buff_details is None:
-            self.buff_details = []
 
     def toStatusBarMessage(self) -> str:
         """生成statusBar显示消息。"""
@@ -53,22 +53,8 @@ class LimitBreakResult:
         parts = [f"舰娘\"{self.ship_name}\"界限突破成功"]
         parts.append(f"{self.old_star}星→{self.new_star}星")
 
-        if self.is_max_star:
-            parts.append("已达满星")
-
-        if self.tp_value > 0:
-            parts.append(f"科技点+{self.tp_value}")
-
-        if self.buff_details:
-            buff_parts = []
-            for buff in self.buff_details:
-                ship_typ = buff.get('ship_typ', '')
-                buff_typ = buff.get('buff_typ', '')
-                buff_value = buff.get('buff_value', 0)
-                if ship_typ and buff_typ:
-                    buff_parts.append(f"{ship_typ} {buff_typ}+{buff_value}")
-            if buff_parts:
-                parts.append(" ".join(buff_parts))
+        if self.is_full_star:
+            parts.append("已达成满星条件")
 
         return " | ".join(parts)
 
@@ -79,16 +65,6 @@ class LimitBreakService:
 
     封装舰娘界限突破相关的业务逻辑，确保事务完整性。
     """
-
-    MAX_STAR_MAP = {
-        'UR': 6,
-        'DR': 6,
-        'SSR': 6,
-        'PRY': 6,
-        'SR': 5,
-        'R': 5,
-        'N': 4
-    }
 
     def __init__(
         self,
@@ -112,36 +88,10 @@ class LimitBreakService:
         """
         获取可进行界限突破的舰娘列表。
 
-        查询条件：
-        - ship_star < CASE WHEN ship_rarity IN ('UR', 'DR', 'SSR', 'PRY') THEN 6
-                           WHEN ship_rarity IN ('SR', 'R') THEN 5
-                           WHEN ship_rarity = 'N' THEN 4 END
-        - ship_group != '改造'
-        - codex_unlock = 'Y'
-
         Returns:
-            可突破舰娘模型列表。
+            可界限突破的舰娘模型列表。
         """
-        sql = """
-            SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
-                   ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
-                   oath_status, codex_unlock, date_edit
-            FROM codex_group
-            WHERE ship_star < CASE
-                WHEN ship_rarity IN ('UR', 'DR', 'SSR', 'PRY') THEN 6
-                WHEN ship_rarity IN ('SR', 'R') THEN 5
-                WHEN ship_rarity = 'N' THEN 4
-                END
-              AND ship_group != '改造'
-              AND codex_unlock = 'Y'
-            ORDER BY ship_aid DESC, codex_id DESC
-        """
-        try:
-            with self._group_repository._getConnection() as conn:
-                cursor = conn.execute(sql)
-                return [CodexGroupModel.fromDict(dict(row)) for row in cursor.fetchall()]
-        except sqlite3.Error as e:
-            raise DatabaseError(f"查询可突破舰娘列表失败: {e}")
+        return self._group_repository.findLimitBreakable()
 
     def getShipById(self, codex_id) -> Optional[CodexGroupModel]:
         """
@@ -156,9 +106,9 @@ class LimitBreakService:
         codex_id = str(codex_id) if codex_id is not None else ""
         return self._group_repository.findById(codex_id)
 
-    def getMaxStar(self, ship_rarity: str) -> int:
+    def _getMaxStar(self, ship_rarity: str) -> int:
         """
-        根据稀有度获取满星数值。
+        根据稀有度获取满星阈值。
 
         Args:
             ship_rarity: 舰娘稀有度。
@@ -166,19 +116,35 @@ class LimitBreakService:
         Returns:
             满星数值。
         """
-        return self.MAX_STAR_MAP.get(ship_rarity, 0)
+        return MAX_STAR_MAP.get(ship_rarity, MAX_STAR_DEFAULT)
+
+    def _updateFullStarConditions(self, conn: sqlite3.Connection, codex_id: str) -> None:
+        """
+        更新满星相关的条件解锁状态。
+
+        在同一连接中更新tp表和buff表的满星条件记录。
+
+        Args:
+            conn: 数据库连接。
+            codex_id: 图鉴ID。
+        """
+        tp_sql = "UPDATE codex_tp SET tp_unlock = 'Y' WHERE codex_id = ? AND unlock_cond = '满星'"
+        conn.execute(tp_sql, (codex_id,))
+
+        buff_sql = "UPDATE codex_buff SET buff_unlock = 'Y' WHERE codex_id = ? AND buff_cond = '满星'"
+        conn.execute(buff_sql, (codex_id,))
 
     def limitBreak(self, codex_id) -> LimitBreakResult:
         """
-        执行舰娘界限突破（增加1星）。
+        执行舰娘界限突破（星级+1）。
 
-        当舰娘达到满星时，同步更新tp表和buff表中"条件满星"相关的记录。
+        将舰娘星级提升1级，若达到满星则同步更新tp表和buff表的满星条件。
 
         Args:
             codex_id: 图鉴ID。
 
         Returns:
-            LimitBreakResult 突破结果对象。
+            LimitBreakResult 界限突破结果对象。
 
         Raises:
             ValidationError: 当参数验证失败时抛出。
@@ -205,55 +171,57 @@ class LimitBreakService:
                 message=f"舰娘 '{ship.ship_name}' 尚未解锁"
             )
 
-        max_star = self.getMaxStar(ship.ship_rarity)
-        if ship.ship_star >= max_star:
+        if ship.ship_group == "改造":
             return LimitBreakResult(
                 success=False,
                 ship_name=ship.ship_name,
-                message=f"舰娘 '{ship.ship_name}' 已达满星"
+                message=f"舰娘 '{ship.ship_name}' 为改造类型，不支持界限突破"
             )
 
-        new_star = ship.ship_star + 1
-        is_max_star = (new_star == max_star)
+        max_star = self._getMaxStar(ship.ship_rarity)
+        old_star = ship.ship_star
+        new_star = old_star + 1
+
+        if new_star > max_star:
+            return LimitBreakResult(
+                success=False,
+                ship_name=ship.ship_name,
+                old_star=old_star,
+                message=f"舰娘 '{ship.ship_name}' 已达到满星（{max_star}星）"
+            )
+
+        is_full_star = (new_star == max_star)
 
         try:
             with DatabaseContext(self._group_repository.dbPath) as conn:
-                self._updateShipStar(conn, codex_id, new_star)
+                update_sql = "UPDATE codex_group SET ship_star = ? WHERE codex_id = ?"
+                conn.execute(update_sql, (new_star, codex_id))
 
-                if is_max_star:
-                    tp_value = self._updateMaxStarTp(conn, codex_id)
-                    buff_details = self._updateMaxStarBuff(conn, codex_id)
-                else:
-                    tp_value = 0
-                    buff_details = []
-
-            log.info(f"舰娘 '{ship.ship_name}' 界限突破成功: {ship.ship_star}星→{new_star}星")
+                if is_full_star:
+                    self._updateFullStarConditions(conn, codex_id)
 
             return LimitBreakResult(
                 success=True,
                 ship_name=ship.ship_name,
-                old_star=ship.ship_star,
+                old_star=old_star,
                 new_star=new_star,
-                is_max_star=is_max_star,
-                tp_value=tp_value,
-                buff_details=buff_details,
+                is_full_star=is_full_star,
                 message=f"舰娘 '{ship.ship_name}' 界限突破成功"
             )
         except sqlite3.Error as e:
-            log.error(f"界限突破操作失败: {e}")
             raise DatabaseError(f"界限突破操作失败: {e}")
 
     def limitBreakMax(self, codex_id) -> LimitBreakResult:
         """
-        执行舰娘界限突破·MAX（直接满星）。
+        执行舰娘界限突破·MAX（直接提升至满星）。
 
-        当舰娘达到满星时，同步更新tp表和buff表中"条件满星"相关的记录。
+        将舰娘星级直接设置为满星，若原星级未满则同步更新tp表和buff表的满星条件。
 
         Args:
             codex_id: 图鉴ID。
 
         Returns:
-            LimitBreakResult 突破结果对象。
+            LimitBreakResult 界限突破结果对象。
 
         Raises:
             ValidationError: 当参数验证失败时抛出。
@@ -280,77 +248,41 @@ class LimitBreakService:
                 message=f"舰娘 '{ship.ship_name}' 尚未解锁"
             )
 
-        max_star = self.getMaxStar(ship.ship_rarity)
-        if ship.ship_star >= max_star:
+        if ship.ship_group == "改造":
             return LimitBreakResult(
                 success=False,
                 ship_name=ship.ship_name,
-                message=f"舰娘 '{ship.ship_name}' 已达满星"
+                message=f"舰娘 '{ship.ship_name}' 为改造类型，不支持界限突破"
+            )
+
+        max_star = self._getMaxStar(ship.ship_rarity)
+        old_star = ship.ship_star
+
+        if old_star >= max_star:
+            return LimitBreakResult(
+                success=False,
+                ship_name=ship.ship_name,
+                old_star=old_star,
+                message=f"舰娘 '{ship.ship_name}' 已达到满星（{max_star}星）"
             )
 
         new_star = max_star
-        is_max_star = True
+        is_full_star = True
 
         try:
             with DatabaseContext(self._group_repository.dbPath) as conn:
-                self._updateShipStar(conn, codex_id, new_star)
+                update_sql = "UPDATE codex_group SET ship_star = ? WHERE codex_id = ?"
+                conn.execute(update_sql, (new_star, codex_id))
 
-                tp_value = self._updateMaxStarTp(conn, codex_id)
-                buff_details = self._updateMaxStarBuff(conn, codex_id)
-
-            log.info(f"舰娘 '{ship.ship_name}' 界限突破·MAX成功: {ship.ship_star}星→{new_star}星")
+                self._updateFullStarConditions(conn, codex_id)
 
             return LimitBreakResult(
                 success=True,
                 ship_name=ship.ship_name,
-                old_star=ship.ship_star,
+                old_star=old_star,
                 new_star=new_star,
-                is_max_star=is_max_star,
-                tp_value=tp_value,
-                buff_details=buff_details,
+                is_full_star=is_full_star,
                 message=f"舰娘 '{ship.ship_name}' 界限突破·MAX成功"
             )
         except sqlite3.Error as e:
-            log.error(f"界限突破·MAX操作失败: {e}")
             raise DatabaseError(f"界限突破·MAX操作失败: {e}")
-
-    def _updateShipStar(self, conn: sqlite3.Connection, codex_id: str, ship_star: int) -> int:
-        """更新舰娘星级。"""
-        sql = "UPDATE codex_group SET ship_star = ? WHERE codex_id = ?"
-        cursor = conn.execute(sql, (ship_star, codex_id))
-        return cursor.rowcount
-
-    def _updateMaxStarTp(self, conn: sqlite3.Connection, codex_id: str) -> int:
-        """更新满星相关的TP解锁状态并返回科技点值。"""
-        sql = """
-            UPDATE codex_tp
-            SET tp_unlock = 'Y'
-            WHERE codex_id = ? AND unlock_cond = '条件满星'
-        """
-        conn.execute(sql, (codex_id,))
-
-        sql_value = """
-            SELECT COALESCE(SUM(tp_value), 0) as total
-            FROM codex_tp
-            WHERE codex_id = ? AND unlock_cond = '条件满星' AND tp_unlock = 'Y'
-        """
-        cursor = conn.execute(sql_value, (codex_id,))
-        row = cursor.fetchone()
-        return row[0] if row else 0
-
-    def _updateMaxStarBuff(self, conn: sqlite3.Connection, codex_id: str) -> List[Dict]:
-        """更新满星相关的Buff解锁状态并返回详情。"""
-        sql = """
-            UPDATE codex_buff
-            SET buff_unlock = 'Y'
-            WHERE codex_id = ? AND buff_cond = '条件满星'
-        """
-        conn.execute(sql, (codex_id,))
-
-        sql_details = """
-            SELECT boost_typ as ship_typ, buff_typ, buff_value
-            FROM codex_buff
-            WHERE codex_id = ? AND buff_cond = '条件满星' AND buff_unlock = 'Y'
-        """
-        cursor = conn.execute(sql_details, (codex_id,))
-        return [dict(row) for row in cursor.fetchall()]

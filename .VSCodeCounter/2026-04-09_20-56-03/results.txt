@@ -1,0 +1,76 @@
+Date : 2026-04-09 20:56:03
+Directory : c:\Alkaid\Office App\Project\Py\AzurLaneTool
+Total : 36 files,  3132 codes, 15 comments, 743 blanks, all 3890 lines
+
+Languages
++------------------+------------+------------+------------+------------+------------+
+| language         | files      | code       | comment    | blank      | total      |
++------------------+------------+------------+------------+------------+------------+
+| Python           |         31 |      2,738 |          0 |        633 |      3,371 |
+| Markdown         |          1 |        317 |          0 |         97 |        414 |
+| MS SQL           |          1 |         48 |          3 |          0 |         51 |
+| Batch            |          1 |         19 |          2 |          6 |         27 |
+| JSON             |          1 |          6 |          0 |          1 |          7 |
+| pip requirements |          1 |          4 |         10 |          6 |         20 |
++------------------+------------+------------+------------+------------+------------+
+
+Directories
++---------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| path                                                                                        | files      | code       | comment    | blank      | total      |
++---------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+| .                                                                                           |         36 |      3,132 |         15 |        743 |      3,890 |
+| . (Files)                                                                                   |          4 |        371 |         12 |        124 |        507 |
+| data                                                                                        |          1 |          6 |          0 |          1 |          7 |
+| models                                                                                      |          4 |        172 |          0 |         40 |        212 |
+| repositories                                                                                |          4 |        754 |          0 |        115 |        869 |
+| services                                                                                    |          5 |        448 |          0 |        122 |        570 |
+| sql                                                                                         |          1 |         48 |          3 |          0 |         51 |
+| tests                                                                                       |          5 |        508 |          0 |         99 |        607 |
+| utils                                                                                       |          6 |        276 |          0 |         97 |        373 |
+| views                                                                                       |          6 |        549 |          0 |        145 |        694 |
+| views (Files)                                                                               |          2 |        125 |          0 |         33 |        158 |
+| views\widgets                                                                               |          4 |        424 |          0 |        112 |        536 |
++---------------------------------------------------------------------------------------------+------------+------------+------------+------------+------------+
+
+Files
++---------------------------------------------------------------------------------------------+------------------+------------+------------+------------+------------+
+| filename                                                                                    | language         | code       | comment    | blank      | total      |
++---------------------------------------------------------------------------------------------+------------------+------------+------------+------------+------------+
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\build.bat                                      | Batch            |         19 |          2 |          6 |         27 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\data\user.json                                 | JSON             |          6 |          0 |          1 |          7 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\main.py                                        | Python           |         31 |          0 |         15 |         46 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\models\__init__.py                             | Python           |          0 |          0 |          1 |          1 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\models\base_model.py                           | Python           |         41 |          0 |         13 |         54 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\models\codex_model.py                          | Python           |        101 |          0 |         17 |        118 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\models\ship_model.py                           | Python           |         30 |          0 |          9 |         39 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\repositories\__init__.py                       | Python           |          0 |          0 |          1 |          1 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\repositories\base_repository.py                | Python           |         78 |          0 |         27 |        105 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\repositories\codex_repository.py               | Python           |        519 |          0 |         54 |        573 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\repositories\ship_repository.py                | Python           |        157 |          0 |         33 |        190 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\requirements.txt                               | pip requirements |          4 |         10 |          6 |         20 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\services\__init__.py                           | Python           |          0 |          0 |          1 |          1 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\services\calc_service.py                       | Python           |         84 |          0 |         24 |        108 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\services\codex_unlock_service.py               | Python           |        149 |          0 |         35 |        184 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\services\data_service.py                       | Python           |         94 |          0 |         30 |        124 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\services\statistics_service.py                 | Python           |        121 |          0 |         32 |        153 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\sql\GetTheBulinRequirements_ByBulinQuality.sql | MS SQL           |         48 |          3 |          0 |         51 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\tests\__init__.py                              | Python           |          0 |          0 |          1 |          1 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\tests\test_codex_unlock.py                     | Python           |        347 |          0 |         55 |        402 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\tests\test_models.py                           | Python           |         51 |          0 |         14 |         65 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\tests\test_services.py                         | Python           |         53 |          0 |         12 |         65 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\tests\test_utils.py                            | Python           |         57 |          0 |         17 |         74 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\utils\__init__.py                              | Python           |          0 |          0 |          1 |          1 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\utils\constants.py                             | Python           |         18 |          0 |          8 |         26 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\utils\db_connection.py                         | Python           |        115 |          0 |         32 |        147 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\utils\exceptions.py                            | Python           |         16 |          0 |         10 |         26 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\utils\helpers.py                               | Python           |         83 |          0 |         30 |        113 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\utils\sql_loader.py                            | Python           |         44 |          0 |         16 |         60 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\views\__init__.py                              | Python           |          0 |          0 |          1 |          1 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\views\main_window.py                           | Python           |        125 |          0 |         32 |        157 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\views\widgets\__init__.py                      | Python           |          0 |          0 |          1 |          1 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\views\widgets\codex_unlock_panel.py            | Python           |        145 |          0 |         33 |        178 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\views\widgets\stat_card.py                     | Python           |         65 |          0 |         18 |         83 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\views\widgets\statistics_panel.py              | Python           |        214 |          0 |         60 |        274 |
+| c:\Alkaid\Office App\Project\Py\AzurLaneTool\设计与开发规范文档.md                                   | Markdown         |        317 |          0 |         97 |        414 |
+| Total                                                                                       |                  |      3,132 |         15 |        743 |      3,890 |
++---------------------------------------------------------------------------------------------+------------------+------------+------------+------------+------------+

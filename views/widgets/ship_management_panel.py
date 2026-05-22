@@ -7,7 +7,7 @@
 from typing import Optional
 
 from PyQt5.QtWidgets import (
-    QWidget, QGridLayout
+    QWidget, QHBoxLayout, QVBoxLayout, QGridLayout
 )
 from PyQt5.QtCore import pyqtSignal
 
@@ -67,11 +67,6 @@ class ShipManagementPanel(QWidget):
         layout.addWidget(self._unlockPanel, 0, 0)
         layout.addWidget(self._awakenPanel, 0, 1)
         layout.addWidget(self._limitBreakPanel, 1, 0)
-
-        layout.setRowStretch(0, 1)
-        layout.setRowStretch(1, 1)
-        layout.setColumnStretch(0, 1)
-        layout.setColumnStretch(1, 1)
 
     def _connectSignals(self) -> None:
         """连接信号与槽。"""
