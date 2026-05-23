@@ -17,6 +17,7 @@ from services.codex_unlock_service import CodexUnlockService, UnlockResult
 from services.awaken_service import AwakenService, AwakenResult
 from services.limit_break_service import LimitBreakService, LimitBreakResult
 from services.statistics_service import StatisticsService
+from services.mental_calculation_service import MentalCalculationService, MentalCalculationResult
 from views.widgets.statistics_panel import StatisticsPanel
 from views.widgets.ship_management_panel import ShipManagementPanel
 from utils.constants import WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT, APP_NAME
@@ -36,7 +37,8 @@ class MainWindow(QMainWindow):
         unlock_service: CodexUnlockService = None,
         awaken_service: AwakenService = None,
         limit_break_service: LimitBreakService = None,
-        statistics_service: StatisticsService = None
+        statistics_service: StatisticsService = None,
+        mental_calculation_service: MentalCalculationService = None
     ):
         """
         初始化主窗口。
@@ -48,6 +50,7 @@ class MainWindow(QMainWindow):
             awaken_service: 觉醒服务实例。
             limit_break_service: 界限突破服务实例。
             statistics_service: 统计服务实例。
+            mental_calculation_service: 心智计算服务实例。
         """
         super().__init__()
         self._data_service = data_service or DataService()
@@ -56,6 +59,7 @@ class MainWindow(QMainWindow):
         self._awaken_service = awaken_service or AwakenService()
         self._limit_break_service = limit_break_service or LimitBreakService()
         self._statistics_service = statistics_service or StatisticsService()
+        self._mental_calculation_service = mental_calculation_service or MentalCalculationService()
 
         self._initUi()
         self._initMenuBar()
@@ -86,6 +90,10 @@ class MainWindow(QMainWindow):
         self._tabWidget.setDocumentMode(True)
 
         self._statisticsPanel = StatisticsPanel(self._statistics_service)
+        self._statisticsPanel = StatisticsPanel(
+            self._statistics_service,
+            mental_calculation_service=self._mental_calculation_service
+        )
         self._tabWidget.addTab(self._statisticsPanel, "数据看板")
 
         self._shipManagementPanel = ShipManagementPanel(

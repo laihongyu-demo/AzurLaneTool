@@ -256,6 +256,63 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"查询剩余练级数量失败: {e}")
 
+    def calculateMentalMaterials(self, target_phase: int) -> Dict[str, int]:
+        """
+        计算所有已解锁舰娘从当前状态提升至指定阶段所需的心智材料总量。
+
+        物资格式：
+        - expend_gc: 物资
+        - expend_limit: 心智单元
+        - expend_limit2: 心智单元Ⅱ
+
+        Args:
+            target_phase: 目标阶段（4=认知觉醒五阶, 5=认知觉醒Ⅱ）。
+
+        Returns:
+            包含expend_gc、expend_limit、expend_limit2的字典。
+        """
+        if target_phase == 4:
+            level_exclusion = "AND cg.ship_level NOT IN ('认知觉醒四阶', '认知觉醒五阶', '认知觉醒II')"
+        else:
+            level_exclusion = "AND cg.ship_level NOT IN ('认知觉醒II')"
+
+        sql = f"""
+            SELECT
+                COALESCE(SUM(am.expend_gc), 0) AS expend_gc,
+                COALESCE(SUM(am.expend_limit), 0) AS expend_limit,
+                COALESCE(SUM(am.expend_limit2), 0) AS expend_limit2
+            FROM codex_group cg
+            JOIN awakening_of_mind am ON cg.ship_rarity = am.ship_rarity
+            WHERE cg.codex_unlock = 'Y'
+              AND cg.ship_group NOT IN ('μ兵装', '小船', '改造', '联动')
+              AND cg.ship_camp != 'UNIV'
+              {level_exclusion}
+              AND am.am_phase >
+                  CASE cg.ship_level
+                      WHEN '认知觉醒一阶' THEN 1
+                      WHEN '认知觉醒二阶' THEN 2
+                      WHEN '认知觉醒三阶' THEN 3
+                      WHEN '认知觉醒四阶' THEN 4
+                      WHEN '认知觉醒五阶' THEN 4
+                      WHEN '认知觉醒Ⅱ' THEN 5
+                      ELSE 0
+                  END
+              AND am.am_phase <= ?
+        """
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql, (target_phase,))
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        "expend_gc": row["expend_gc"],
+                        "expend_limit": row["expend_limit"],
+                        "expend_limit2": row["expend_limit2"]
+                    }
+                return {"expend_gc": 0, "expend_limit": 0, "expend_limit2": 0}
+        except sqlite3.Error as e:
+            raise DatabaseError(f"计算心智材料失败: {e}")
+
     def findAwakenable(self) -> List[CodexGroupModel]:
         """
         查询可进行认知觉醒的舰娘列表。

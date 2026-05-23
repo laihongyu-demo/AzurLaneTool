@@ -8,12 +8,13 @@ from typing import Optional, Dict, Any
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QGroupBox, QMessageBox
+    QGroupBox, QMessageBox, QCheckBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 
 from services.statistics_service import StatisticsService
 from services.user_service import UserService
+from services.mental_calculation_service import MentalCalculationService, MentalCalculationResult
 from views.widgets.stat_card import StatCard
 from utils.exceptions import DatabaseError
 
@@ -31,6 +32,7 @@ class StatisticsPanel(QWidget):
         self,
         statistics_service: Optional[StatisticsService] = None,
         user_service: Optional[UserService] = None,
+        mental_calculation_service: Optional[MentalCalculationService] = None,
         parent: QWidget = None
     ):
         """
@@ -39,11 +41,13 @@ class StatisticsPanel(QWidget):
         Args:
             statistics_service: 统计服务实例。
             user_service: 用户服务实例。
+            mental_calculation_service: 心智计算服务实例。
             parent: 父控件。
         """
         super().__init__(parent)
         self._statistics_service = statistics_service or StatisticsService()
         self._user_service = user_service or UserService()
+        self._mental_calculation_service = mental_calculation_service or MentalCalculationService()
         self._initUi()
         self._connectSignals()
         self.refreshData()
@@ -145,6 +149,13 @@ class StatisticsPanel(QWidget):
         layout.addWidget(requirement_group)
 
         button_layout = QHBoxLayout()
+        self._phaseIICheckBox = QCheckBox("认知觉醒II")
+        self._phaseIICheckBox.setToolTip("勾选后计算至认知觉醒II阶段所需材料总量")
+        self._mentalCalcBtn = QPushButton("心智计算")
+        self._mentalCalcBtn.setMinimumWidth(100)
+        self._mentalCalcBtn.setMinimumHeight(35)
+        button_layout.addWidget(self._phaseIICheckBox)
+        button_layout.addWidget(self._mentalCalcBtn)
         button_layout.addStretch()
         self._refreshBtn = QPushButton("刷新统计")
         self._refreshBtn.setMinimumWidth(120)
@@ -157,6 +168,7 @@ class StatisticsPanel(QWidget):
     def _connectSignals(self) -> None:
         """连接信号与槽。"""
         self._refreshBtn.clicked.connect(self._onRefreshClicked)
+        self._mentalCalcBtn.clicked.connect(self._onMentalCalcClicked)
         self._commanderLevelCard.clicked.connect(self._onCommanderLevelClicked)
         self._cubeCard.clicked.connect(self._onCubeClicked)
         self._redGemCard.clicked.connect(self._onRedGemClicked)
@@ -204,6 +216,42 @@ class StatisticsPanel(QWidget):
             "开发中",
             QMessageBox.Ok
         )
+
+    def _onMentalCalcClicked(self) -> None:
+        """
+        心智计算按钮点击事件处理。
+
+        根据复选框状态计算心智材料需求：
+        - 未选中：计算至认知觉醒五阶(phase 4)
+        - 选中：计算至认知觉醒II(phase 5)
+        """
+        try:
+            include_phase_ii = self._phaseIICheckBox.isChecked()
+            result = self._mental_calculation_service.calculate(include_phase_ii)
+
+            if result.success:
+                self._updateMentalCards(result)
+            else:
+                self._mentalUnitCard.setValue("错误")
+                self._mentalUnitIICard.setValue("错误")
+                self._coinCard.setValue("错误")
+                QMessageBox.warning(self, "计算错误", result.message)
+        except Exception as e:
+            self._mentalUnitCard.setValue("错误")
+            self._mentalUnitIICard.setValue("错误")
+            self._coinCard.setValue("错误")
+            QMessageBox.critical(self, "错误", f"心智计算异常: {e}")
+
+    def _updateMentalCards(self, result: MentalCalculationResult) -> None:
+        """
+        根据计算结果更新心智相关标签卡。
+
+        Args:
+            result: 心智计算结果对象。
+        """
+        self._mentalUnitCard.setValue(str(result.expend_limit))
+        self._mentalUnitIICard.setValue(str(result.expend_limit2))
+        self._coinCard.setValue(str(result.expend_gc))
 
     def refreshData(self) -> None:
         """刷新统计数据。"""
