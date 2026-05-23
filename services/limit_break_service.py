@@ -36,6 +36,7 @@ class LimitBreakResult:
         old_star: 原星级。
         new_star: 新星级。
         is_full_star: 是否达到满星。
+        tp_value: 满星获得的科技点值（非满星时为0）。
         message: 结果消息。
     """
     success: bool
@@ -43,6 +44,7 @@ class LimitBreakResult:
     old_star: int = 0
     new_star: int = 0
     is_full_star: bool = False
+    tp_value: int = 0
     message: str = ""
 
     def toStatusBarMessage(self) -> str:
@@ -53,8 +55,8 @@ class LimitBreakResult:
         parts = [f"舰娘\"{self.ship_name}\"界限突破成功"]
         parts.append(f"{self.old_star}星→{self.new_star}星")
 
-        if self.is_full_star:
-            parts.append("已达成满星条件")
+        if self.is_full_star and self.tp_value > 0:
+            parts.append(f"科技点+{self.tp_value}")
 
         return " | ".join(parts)
 
@@ -191,6 +193,9 @@ class LimitBreakService:
             )
 
         is_full_star = (new_star == max_star)
+        tp_value = 0
+        if is_full_star:
+            tp_value = self._tp_repository.getTpValueByCondition(codex_id, "满星")
 
         try:
             with DatabaseContext(self._group_repository.dbPath) as conn:
@@ -206,6 +211,7 @@ class LimitBreakService:
                 old_star=old_star,
                 new_star=new_star,
                 is_full_star=is_full_star,
+                tp_value=tp_value,
                 message=f"舰娘 '{ship.ship_name}' 界限突破成功"
             )
         except sqlite3.Error as e:
@@ -268,6 +274,7 @@ class LimitBreakService:
 
         new_star = max_star
         is_full_star = True
+        tp_value = self._tp_repository.getTpValueByCondition(codex_id, "满星")
 
         try:
             with DatabaseContext(self._group_repository.dbPath) as conn:
@@ -282,6 +289,7 @@ class LimitBreakService:
                 old_star=old_star,
                 new_star=new_star,
                 is_full_star=is_full_star,
+                tp_value=tp_value,
                 message=f"舰娘 '{ship.ship_name}' 界限突破·MAX成功"
             )
         except sqlite3.Error as e:

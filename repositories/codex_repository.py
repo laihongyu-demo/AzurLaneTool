@@ -610,6 +610,30 @@ class CodexTpRepository(BaseRepository[CodexTpModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"更新TP满星状态失败: {e}")
 
+    def getTpValueByCondition(self, codex_id: str, unlock_cond: str) -> int:
+        """
+        查询指定舰娘在指定解锁条件下的科技点值。
+
+        Args:
+            codex_id: 图鉴ID。
+            unlock_cond: 解锁条件（如'解锁'、'满星'、'Lv.120'）。
+
+        Returns:
+            科技点值，未找到时返回0。
+        """
+        sql = f"""
+            SELECT COALESCE(SUM(tp_value), 0) as total
+            FROM {self.TABLE_NAME}
+            WHERE codex_id = ? AND unlock_cond = ?
+        """
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql, (codex_id, unlock_cond))
+                row = cursor.fetchone()
+                return row['total'] if row else 0
+        except sqlite3.Error as e:
+            raise DatabaseError(f"查询TP值失败: {e}")
+
 
 class CodexBuffRepository(BaseRepository[CodexBuffModel]):
     """
