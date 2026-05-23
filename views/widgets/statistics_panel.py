@@ -17,6 +17,7 @@ from services.user_service import UserService
 from services.mental_calculation_service import MentalCalculationService, MentalCalculationResult
 from views.widgets.stat_card import StatCard
 from utils.exceptions import DatabaseError
+from utils.unit_formatter import formatValue
 
 
 class StatisticsPanel(QWidget):
@@ -249,9 +250,9 @@ class StatisticsPanel(QWidget):
         Args:
             result: 心智计算结果对象。
         """
-        self._mentalUnitCard.setValue(str(result.expend_limit))
-        self._mentalUnitIICard.setValue(str(result.expend_limit2))
-        self._coinCard.setValue(str(result.expend_gc))
+        self._mentalUnitCard.setValue(formatValue(result.expend_limit))
+        self._mentalUnitIICard.setValue(formatValue(result.expend_limit2))
+        self._coinCard.setValue(formatValue(result.expend_gc))
 
     def refreshData(self) -> None:
         """刷新统计数据。"""
