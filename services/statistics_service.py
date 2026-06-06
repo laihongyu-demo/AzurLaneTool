@@ -119,6 +119,29 @@ class StatisticsService:
 
         return result
 
+    def getOathStatistics(self) -> Dict[str, Any]:
+        """
+        获取誓约统计信息。
+
+        统计规则：
+        - 排除ship_group为'改造'或'联动'的舰娘
+        - 以oath_status = 'Y'作为已誓约判定条件
+        - 誓约率 = 已誓约数 / 有效总数 × 100
+
+        Returns:
+            包含total、oathed和oath_rate的字典。
+        """
+        oath_stats = self._group_repository.getOathStatistics()
+        total = oath_stats.get("total", 0)
+        oathed = oath_stats.get("oathed", 0)
+        oath_rate = (oathed / total * 100) if total > 0 else 0
+
+        return {
+            "total": total,
+            "oathed": oathed,
+            "oath_rate": oath_rate
+        }
+
     def getRemainingLevelingCount(self) -> int:
         """
         获取剩余练级数量。
@@ -139,6 +162,7 @@ class StatisticsService:
             "unlock": self.getUnlockStatistics(),
             "tp": self.getTpStatistics(),
             "bulin": self.getBulinRequirements(),
+            "oath": self.getOathStatistics(),
             "remaining_leveling": self.getRemainingLevelingCount()
         }
 

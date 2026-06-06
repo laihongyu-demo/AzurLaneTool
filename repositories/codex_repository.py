@@ -411,6 +411,35 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"更新舰娘星级失败: {e}")
 
+    def getOathStatistics(self) -> Dict[str, int]:
+        """
+        获取誓约统计信息。
+
+        统计规则：
+        - 排除ship_group为'改造'或'联动'的舰娘
+        - 以oath_status = 'Y'作为已誓约判定条件
+
+        Returns:
+            包含total（有效总数）和oathed（已誓约数）的字典。
+        """
+        sql = f"""
+            SELECT
+                COUNT(*) as total,
+                COALESCE(SUM(CASE WHEN oath_status = 'Y' THEN 1 ELSE 0 END), 0) as oathed
+            FROM {self.TABLE_NAME}
+            WHERE ship_group NOT IN ('改造', '联动')
+        """
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql)
+                row = cursor.fetchone()
+                return {
+                    "total": row['total'] if row else 0,
+                    "oathed": row['oathed'] if row else 0
+                }
+        except sqlite3.Error as e:
+            raise DatabaseError(f"查询誓约统计失败: {e}")
+
 
 class CodexTpRepository(BaseRepository[CodexTpModel]):
     """

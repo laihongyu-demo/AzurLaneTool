@@ -98,11 +98,13 @@ class StatisticsPanel(QWidget):
         self._unlockedCard = StatCard("已解锁", "0")
         self._lockedCard = StatCard("未解锁", "0")
         self._rateCard = StatCard("收藏率", "0%")
+        self._oathRateCard = StatCard("誓约率", "0%")
 
         unlock_stats_layout.addWidget(self._totalCard)
         unlock_stats_layout.addWidget(self._unlockedCard)
         unlock_stats_layout.addWidget(self._lockedCard)
         unlock_stats_layout.addWidget(self._rateCard)
+        unlock_stats_layout.addWidget(self._oathRateCard)
 
         unlock_layout.addLayout(unlock_stats_layout)
         layout.addWidget(unlock_group)
@@ -273,6 +275,10 @@ class StatisticsPanel(QWidget):
             self._lockedCard.setValue(locked_text)
             self._rateCard.setValue(rate_text)
 
+            oath_stats = stats.get("oath", {})
+            oath_rate_text = f"{oath_stats.get('oath_rate', 0):.1f}%"
+            self._oathRateCard.setValue(oath_rate_text)
+
             tp_stats = stats.get("tp", {})
             total_tp = tp_stats.get("total_tp", 0)
             unlocked_tp = tp_stats.get("unlocked_tp", 0)
@@ -301,6 +307,7 @@ class StatisticsPanel(QWidget):
         self._unlockedCard.setValue("错误")
         self._lockedCard.setValue("错误")
         self._rateCard.setValue("错误")
+        self._oathRateCard.setValue("错误")
         self._totalTpCard.setValue("错误")
         self._unlockedTpCard.setValue("错误")
         self._tpRateCard.setValue("错误")
