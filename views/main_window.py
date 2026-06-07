@@ -16,6 +16,7 @@ from services.calc_service import CalcService
 from services.codex_unlock_service import CodexUnlockService, UnlockResult
 from services.awaken_service import AwakenService, AwakenResult
 from services.limit_break_service import LimitBreakService, LimitBreakResult
+from services.codex_oath_service import CodexOathService, OathResult
 from services.statistics_service import StatisticsService
 from services.mental_calculation_service import MentalCalculationService, MentalCalculationResult
 from views.widgets.statistics_panel import StatisticsPanel
@@ -37,6 +38,7 @@ class MainWindow(QMainWindow):
         unlock_service: CodexUnlockService = None,
         awaken_service: AwakenService = None,
         limit_break_service: LimitBreakService = None,
+        oath_service: CodexOathService = None,
         statistics_service: StatisticsService = None,
         mental_calculation_service: MentalCalculationService = None
     ):
@@ -49,6 +51,7 @@ class MainWindow(QMainWindow):
             unlock_service: 解锁服务实例。
             awaken_service: 觉醒服务实例。
             limit_break_service: 界限突破服务实例。
+            oath_service: 誓约服务实例。
             statistics_service: 统计服务实例。
             mental_calculation_service: 心智计算服务实例。
         """
@@ -58,6 +61,7 @@ class MainWindow(QMainWindow):
         self._unlock_service = unlock_service or CodexUnlockService()
         self._awaken_service = awaken_service or AwakenService()
         self._limit_break_service = limit_break_service or LimitBreakService()
+        self._oath_service = oath_service or CodexOathService()
         self._statistics_service = statistics_service or StatisticsService()
         self._mental_calculation_service = mental_calculation_service or MentalCalculationService()
 
@@ -99,7 +103,8 @@ class MainWindow(QMainWindow):
         self._shipManagementPanel = ShipManagementPanel(
             self._unlock_service,
             self._awaken_service,
-            self._limit_break_service
+            self._limit_break_service,
+            self._oath_service
         )
         self._tabWidget.addTab(self._shipManagementPanel, "舰娘管理")
 
@@ -142,6 +147,7 @@ class MainWindow(QMainWindow):
         self._shipManagementPanel.unlockResult.connect(self._onUnlockResult)
         self._shipManagementPanel.awakenResult.connect(self._onAwakenResult)
         self._shipManagementPanel.limitBreakResult.connect(self._onLimitBreakResult)
+        self._shipManagementPanel.oathResult.connect(self._onOathResult)
 
     def _onRefreshClicked(self) -> None:
         """刷新按钮点击事件处理。"""
@@ -182,6 +188,15 @@ class MainWindow(QMainWindow):
 
         Args:
             result: 界限突破结果对象。
+        """
+        self._statusBar.showMessage(result.toStatusBarMessage())
+
+    def _onOathResult(self, result: OathResult) -> None:
+        """
+        誓约结果事件处理。
+
+        Args:
+            result: 誓约结果对象。
         """
         self._statusBar.showMessage(result.toStatusBarMessage())
 

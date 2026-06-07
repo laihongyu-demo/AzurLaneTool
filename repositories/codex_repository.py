@@ -411,6 +411,53 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"更新舰娘星级失败: {e}")
 
+    def findOathable(self) -> List[CodexGroupModel]:
+        """
+        查询可进行誓约的舰娘列表。
+
+        筛选条件：
+        - oath_status = 'N'（未誓约）
+        - codex_unlock = 'Y'（已解锁）
+        - ship_group != '改造'
+        - 排序：ship_aid降序、codex_id降序
+
+        Returns:
+            可誓约舰娘模型列表。
+        """
+        sql = f"""
+            SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
+                   ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
+                   oath_status, codex_unlock, date_edit
+            FROM {self.TABLE_NAME}
+            WHERE oath_status = 'N' AND codex_unlock = 'Y' AND ship_group != '改造'
+            ORDER BY ship_aid DESC, codex_id DESC
+        """
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql)
+                return [CodexGroupModel.fromDict(dict(row)) for row in cursor.fetchall()]
+        except sqlite3.Error as e:
+            raise DatabaseError(f"查询可誓约舰娘列表失败: {e}")
+
+    def updateOathStatus(self, codex_id: str, oath_status: str = "Y") -> bool:
+        """
+        更新舰娘誓约状态。
+
+        Args:
+            codex_id: 图鉴ID。
+            oath_status: 誓约状态，默认为 'Y'。
+
+        Returns:
+            更新是否成功。
+        """
+        sql = f"UPDATE {self.TABLE_NAME} SET oath_status = ? WHERE codex_id = ?"
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql, (oath_status, codex_id))
+                return cursor.rowcount > 0
+        except sqlite3.Error as e:
+            raise DatabaseError(f"更新舰娘誓约状态失败: {e}")
+
     def getOathStatistics(self) -> Dict[str, int]:
         """
         获取誓约统计信息。

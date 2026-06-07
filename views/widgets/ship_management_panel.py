@@ -14,9 +14,11 @@ from PyQt5.QtCore import pyqtSignal
 from services.codex_unlock_service import CodexUnlockService, UnlockResult
 from services.awaken_service import AwakenService, AwakenResult
 from services.limit_break_service import LimitBreakService, LimitBreakResult
+from services.codex_oath_service import CodexOathService, OathResult
 from views.widgets.codex_unlock_panel import CodexUnlockPanel
 from views.widgets.awaken_panel import AwakenPanel
 from views.widgets.limit_break_panel import LimitBreakPanel
+from views.widgets.codex_oath_panel import CodexOathPanel
 
 
 class ShipManagementPanel(QWidget):
@@ -30,12 +32,14 @@ class ShipManagementPanel(QWidget):
     unlockResult = pyqtSignal(object)
     awakenResult = pyqtSignal(object)
     limitBreakResult = pyqtSignal(object)
+    oathResult = pyqtSignal(object)
 
     def __init__(
         self,
         unlock_service: Optional[CodexUnlockService] = None,
         awaken_service: Optional[AwakenService] = None,
         limit_break_service: Optional[LimitBreakService] = None,
+        oath_service: Optional[CodexOathService] = None,
         parent: QWidget = None
     ):
         """
@@ -45,12 +49,14 @@ class ShipManagementPanel(QWidget):
             unlock_service: 解锁服务实例。
             awaken_service: 觉醒服务实例。
             limit_break_service: 界限突破服务实例。
+            oath_service: 誓约服务实例。
             parent: 父控件。
         """
         super().__init__(parent)
         self._unlock_service = unlock_service or CodexUnlockService()
         self._awaken_service = awaken_service or AwakenService()
         self._limit_break_service = limit_break_service or LimitBreakService()
+        self._oath_service = oath_service or CodexOathService()
         self._initUi()
         self._connectSignals()
 
@@ -63,10 +69,12 @@ class ShipManagementPanel(QWidget):
         self._unlockPanel = CodexUnlockPanel(self._unlock_service)
         self._awakenPanel = AwakenPanel(self._awaken_service)
         self._limitBreakPanel = LimitBreakPanel(self._limit_break_service)
+        self._oathPanel = CodexOathPanel(self._oath_service)
 
         layout.addWidget(self._unlockPanel, 0, 0)
         layout.addWidget(self._awakenPanel, 0, 1)
         layout.addWidget(self._limitBreakPanel, 1, 0)
+        layout.addWidget(self._oathPanel, 1, 1)
 
     def _connectSignals(self) -> None:
         """连接信号与槽。"""
@@ -76,6 +84,8 @@ class ShipManagementPanel(QWidget):
         self._awakenPanel.awakenResult.connect(self._onAwakenResult)
         self._limitBreakPanel.dataRefreshed.connect(self._onLimitBreakDataRefreshed)
         self._limitBreakPanel.limitBreakResult.connect(self._onLimitBreakResult)
+        self._oathPanel.dataRefreshed.connect(self._onOathDataRefreshed)
+        self._oathPanel.oathResult.connect(self._onOathResult)
 
     def _onUnlockDataRefreshed(self) -> None:
         """舰娘解锁数据刷新完成事件处理。"""
@@ -101,8 +111,17 @@ class ShipManagementPanel(QWidget):
         """界限突破结果事件处理。"""
         self.limitBreakResult.emit(result)
 
+    def _onOathDataRefreshed(self) -> None:
+        """誓约数据刷新完成事件处理。"""
+        self.dataRefreshed.emit()
+
+    def _onOathResult(self, result: OathResult) -> None:
+        """誓约结果事件处理。"""
+        self.oathResult.emit(result)
+
     def refreshData(self) -> None:
         """刷新界面数据。"""
         self._unlockPanel.refreshData()
         self._awakenPanel.refreshData()
         self._limitBreakPanel.refreshData()
+        self._oathPanel.refreshData()

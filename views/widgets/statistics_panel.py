@@ -144,9 +144,9 @@ class StatisticsPanel(QWidget):
         requirement_stats_layout.addWidget(self._universalBulinCard)
         requirement_stats_layout.addWidget(self._trialBulinCard)
         requirement_stats_layout.addWidget(self._specializedBulinCard)
+        requirement_stats_layout.addWidget(self._coinCard)
         requirement_stats_layout.addWidget(self._mentalUnitCard)
         requirement_stats_layout.addWidget(self._mentalUnitIICard)
-        requirement_stats_layout.addWidget(self._coinCard)
 
         requirement_layout.addLayout(requirement_stats_layout)
         layout.addWidget(requirement_group)
