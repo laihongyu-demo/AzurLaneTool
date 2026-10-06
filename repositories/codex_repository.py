@@ -9,6 +9,7 @@ from typing import Dict, List, Optional
 
 from models.codex_model import CodexGroupModel, CodexTpModel, CodexBuffModel
 from repositories.base_repository import BaseRepository
+from utils.codex_options import ID_PREFIX_PAD_WIDTH, getGroupIdPrefix
 from utils.exceptions import DatabaseError
 from utils.sql_loader import loadSqlFile
 
@@ -57,6 +58,82 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"查询舰娘图鉴详情失败: {e}")
 
+    def getNextCodexId(self, ship_group: str) -> str:
+        """
+        生成指定分组的下一个图鉴ID。
+
+        纯数字分组（常规、小船、μ兵装）共用同一套数字序列，
+        其余分组按前缀（META/Plan/Collab/Refit）递增并补零。
+
+        Args:
+            ship_group: 舰娘分组。
+
+        Returns:
+            下一个可用的图鉴ID字符串。
+
+        Raises:
+            DatabaseError: 当数据库查询失败时抛出。
+        """
+        prefix = getGroupIdPrefix(ship_group)
+
+        if prefix:
+            sql = f"""
+                SELECT MAX(CAST(SUBSTR(codex_id, ?) AS INTEGER)) AS max_no
+                FROM {self.TABLE_NAME}
+                WHERE codex_id LIKE ?
+            """
+            params = (len(prefix) + 1, f"{prefix}%")
+        else:
+            sql = f"""
+                SELECT MAX(CAST(codex_id AS INTEGER)) AS max_no
+                FROM {self.TABLE_NAME}
+                WHERE codex_id NOT GLOB '*[^0-9]*'
+            """
+            params = ()
+
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql, params)
+                row = cursor.fetchone()
+                max_no = row['max_no'] if row and row['max_no'] is not None else 0
+
+                if prefix:
+                    return f"{prefix}{max_no + 1:0{ID_PREFIX_PAD_WIDTH}d}"
+                return str(max_no + 1)
+        except sqlite3.Error as e:
+            raise DatabaseError(f"生成图鉴ID失败: {e}")
+
+    def findByShipName(self, ship_name: str, ship_group: Optional[str] = None) -> List[CodexGroupModel]:
+        """
+        根据舰娘名称查询图鉴记录。
+
+        Args:
+            ship_name: 舰娘名称。
+            ship_group: 可选的舰娘分组，指定时仅在该分组内查询。
+
+        Returns:
+            匹配的舰娘模型列表。
+        """
+        sql = f"""
+            SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
+                   ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
+                   oath_status, codex_unlock, date_edit
+            FROM {self.TABLE_NAME}
+            WHERE ship_name = ?
+        """
+        params: tuple = (ship_name,)
+
+        if ship_group:
+            sql += " AND ship_group = ?"
+            params = (ship_name, ship_group)
+
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql, params)
+                return [CodexGroupModel.fromDict(dict(row)) for row in cursor.fetchall()]
+        except sqlite3.Error as e:
+            raise DatabaseError(f"查询舰娘名称失败: {e}")
+
     def findUnlocked(self) -> List[CodexGroupModel]:
         """查询已解锁的舰娘列表。"""
         sql = f"""
@@ -91,8 +168,17 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"查询未解锁舰娘列表失败: {e}")
 
-    def insert(self, record: CodexGroupModel) -> int:
-        """插入新舰娘图鉴记录。"""
+    def insert(self, record: CodexGroupModel, conn: Optional[sqlite3.Connection] = None) -> int:
+        """
+        插入新舰娘图鉴记录。
+
+        Args:
+            record: 要插入的舰娘图鉴模型。
+            conn: 可选的外部数据库连接，传入时复用其事务（由调用方提交/回滚）。
+
+        Returns:
+            新记录的 rowid。
+        """
         sql = f"""
             INSERT INTO {self.TABLE_NAME} (codex_id, ship_name, ship_level, ship_star,
                    ship_rarity, ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
@@ -106,8 +192,11 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
             record.codex_unlock, record.date_edit
         )
         try:
-            with self._getConnection() as conn:
-                cursor = conn.execute(sql, params)
+            if conn is not None:
+                return conn.execute(sql, params).lastrowid
+
+            with self._getConnection() as db_conn:
+                cursor = db_conn.execute(sql, params)
                 return cursor.lastrowid
         except sqlite3.Error as e:
             raise DatabaseError(f"插入舰娘图鉴记录失败: {e}")
@@ -527,8 +616,17 @@ class CodexTpRepository(BaseRepository[CodexTpModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"查询TP详情失败: {e}")
 
-    def insert(self, record: CodexTpModel) -> int:
-        """插入TP记录。"""
+    def insert(self, record: CodexTpModel, conn: Optional[sqlite3.Connection] = None) -> int:
+        """
+        插入TP记录。
+
+        Args:
+            record: 要插入的TP模型。
+            conn: 可选的外部数据库连接，传入时复用其事务（由调用方提交/回滚）。
+
+        Returns:
+            新记录的 rowid。
+        """
         sql = f"""
             INSERT INTO {self.TABLE_NAME} (codex_id, ship_name, ship_camp, ship_typ,
                    tp_value, unlock_cond, tp_unlock, date_edit)
@@ -539,8 +637,11 @@ class CodexTpRepository(BaseRepository[CodexTpModel]):
             record.tp_value, record.unlock_cond, record.tp_unlock, record.date_edit
         )
         try:
-            with self._getConnection() as conn:
-                cursor = conn.execute(sql, params)
+            if conn is not None:
+                return conn.execute(sql, params).lastrowid
+
+            with self._getConnection() as db_conn:
+                cursor = db_conn.execute(sql, params)
                 return cursor.lastrowid
         except sqlite3.Error as e:
             raise DatabaseError(f"插入TP记录失败: {e}")
@@ -750,8 +851,17 @@ class CodexBuffRepository(BaseRepository[CodexBuffModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"查询Buff详情失败: {e}")
 
-    def insert(self, record: CodexBuffModel) -> int:
-        """插入Buff记录。"""
+    def insert(self, record: CodexBuffModel, conn: Optional[sqlite3.Connection] = None) -> int:
+        """
+        插入Buff记录。
+
+        Args:
+            record: 要插入的Buff模型。
+            conn: 可选的外部数据库连接，传入时复用其事务（由调用方提交/回滚）。
+
+        Returns:
+            新记录的 rowid。
+        """
         sql = f"""
             INSERT INTO {self.TABLE_NAME} (codex_id, ship_name, ship_camp, ship_typ,
                    boost_typ, buff_typ, buff_value, buff_cond, buff_unlock)
@@ -763,8 +873,11 @@ class CodexBuffRepository(BaseRepository[CodexBuffModel]):
             record.buff_unlock
         )
         try:
-            with self._getConnection() as conn:
-                cursor = conn.execute(sql, params)
+            if conn is not None:
+                return conn.execute(sql, params).lastrowid
+
+            with self._getConnection() as db_conn:
+                cursor = db_conn.execute(sql, params)
                 return cursor.lastrowid
         except sqlite3.Error as e:
             raise DatabaseError(f"插入Buff记录失败: {e}")

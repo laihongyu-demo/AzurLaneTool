@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import pyqtSignal
 
 from services.codex_unlock_service import CodexUnlockService, UnlockResult
+from services.codex_ship_create_service import CodexShipCreateService, ShipCreateResult
 from services.awaken_service import AwakenService, AwakenResult
 from services.limit_break_service import LimitBreakService, LimitBreakResult
 from services.codex_oath_service import CodexOathService, OathResult
@@ -30,6 +31,7 @@ class ShipManagementPanel(QWidget):
 
     dataRefreshed = pyqtSignal()
     unlockResult = pyqtSignal(object)
+    shipCreateResult = pyqtSignal(object)
     awakenResult = pyqtSignal(object)
     limitBreakResult = pyqtSignal(object)
     oathResult = pyqtSignal(object)
@@ -37,6 +39,7 @@ class ShipManagementPanel(QWidget):
     def __init__(
         self,
         unlock_service: Optional[CodexUnlockService] = None,
+        create_service: Optional[CodexShipCreateService] = None,
         awaken_service: Optional[AwakenService] = None,
         limit_break_service: Optional[LimitBreakService] = None,
         oath_service: Optional[CodexOathService] = None,
@@ -47,6 +50,7 @@ class ShipManagementPanel(QWidget):
 
         Args:
             unlock_service: 解锁服务实例。
+            create_service: 舰娘新增服务实例。
             awaken_service: 觉醒服务实例。
             limit_break_service: 界限突破服务实例。
             oath_service: 誓约服务实例。
@@ -54,6 +58,7 @@ class ShipManagementPanel(QWidget):
         """
         super().__init__(parent)
         self._unlock_service = unlock_service or CodexUnlockService()
+        self._create_service = create_service or CodexShipCreateService()
         self._awaken_service = awaken_service or AwakenService()
         self._limit_break_service = limit_break_service or LimitBreakService()
         self._oath_service = oath_service or CodexOathService()
@@ -66,7 +71,7 @@ class ShipManagementPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(15)
 
-        self._unlockPanel = CodexUnlockPanel(self._unlock_service)
+        self._unlockPanel = CodexUnlockPanel(self._unlock_service, self._create_service)
         self._awakenPanel = AwakenPanel(self._awaken_service)
         self._limitBreakPanel = LimitBreakPanel(self._limit_break_service)
         self._oathPanel = CodexOathPanel(self._oath_service)
@@ -80,6 +85,7 @@ class ShipManagementPanel(QWidget):
         """连接信号与槽。"""
         self._unlockPanel.dataRefreshed.connect(self._onUnlockDataRefreshed)
         self._unlockPanel.unlockResult.connect(self._onUnlockResult)
+        self._unlockPanel.shipCreateResult.connect(self._onShipCreateResult)
         self._awakenPanel.dataRefreshed.connect(self._onAwakenDataRefreshed)
         self._awakenPanel.awakenResult.connect(self._onAwakenResult)
         self._limitBreakPanel.dataRefreshed.connect(self._onLimitBreakDataRefreshed)
@@ -94,6 +100,10 @@ class ShipManagementPanel(QWidget):
     def _onUnlockResult(self, result: UnlockResult) -> None:
         """解锁结果事件处理。"""
         self.unlockResult.emit(result)
+
+    def _onShipCreateResult(self, result: ShipCreateResult) -> None:
+        """舰娘新增结果事件处理。"""
+        self.shipCreateResult.emit(result)
 
     def _onAwakenDataRefreshed(self) -> None:
         """认知觉醒数据刷新完成事件处理。"""

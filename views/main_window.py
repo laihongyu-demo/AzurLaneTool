@@ -14,6 +14,7 @@ from PyQt5.QtCore import Qt
 from services.data_service import DataService
 from services.calc_service import CalcService
 from services.codex_unlock_service import CodexUnlockService, UnlockResult
+from services.codex_ship_create_service import CodexShipCreateService, ShipCreateResult
 from services.awaken_service import AwakenService, AwakenResult
 from services.limit_break_service import LimitBreakService, LimitBreakResult
 from services.codex_oath_service import CodexOathService, OathResult
@@ -36,6 +37,7 @@ class MainWindow(QMainWindow):
         data_service: DataService = None,
         calc_service: CalcService = None,
         unlock_service: CodexUnlockService = None,
+        create_service: CodexShipCreateService = None,
         awaken_service: AwakenService = None,
         limit_break_service: LimitBreakService = None,
         oath_service: CodexOathService = None,
@@ -49,6 +51,7 @@ class MainWindow(QMainWindow):
             data_service: 数据服务实例。
             calc_service: 计算服务实例。
             unlock_service: 解锁服务实例。
+            create_service: 舰娘新增服务实例。
             awaken_service: 觉醒服务实例。
             limit_break_service: 界限突破服务实例。
             oath_service: 誓约服务实例。
@@ -59,6 +62,7 @@ class MainWindow(QMainWindow):
         self._data_service = data_service or DataService()
         self._calc_service = calc_service or CalcService()
         self._unlock_service = unlock_service or CodexUnlockService()
+        self._create_service = create_service or CodexShipCreateService()
         self._awaken_service = awaken_service or AwakenService()
         self._limit_break_service = limit_break_service or LimitBreakService()
         self._oath_service = oath_service or CodexOathService()
@@ -101,10 +105,11 @@ class MainWindow(QMainWindow):
         self._tabWidget.addTab(self._statisticsPanel, "数据看板")
 
         self._shipManagementPanel = ShipManagementPanel(
-            self._unlock_service,
-            self._awaken_service,
-            self._limit_break_service,
-            self._oath_service
+            unlock_service=self._unlock_service,
+            create_service=self._create_service,
+            awaken_service=self._awaken_service,
+            limit_break_service=self._limit_break_service,
+            oath_service=self._oath_service
         )
         self._tabWidget.addTab(self._shipManagementPanel, "舰娘管理")
 
@@ -145,6 +150,7 @@ class MainWindow(QMainWindow):
         self._shipManagementPanel.dataRefreshed.connect(self._onShipManagementDataRefreshed)
         self._statisticsPanel.dataRefreshed.connect(self._onStatisticsDataRefreshed)
         self._shipManagementPanel.unlockResult.connect(self._onUnlockResult)
+        self._shipManagementPanel.shipCreateResult.connect(self._onShipCreateResult)
         self._shipManagementPanel.awakenResult.connect(self._onAwakenResult)
         self._shipManagementPanel.limitBreakResult.connect(self._onLimitBreakResult)
         self._shipManagementPanel.oathResult.connect(self._onOathResult)
@@ -170,6 +176,15 @@ class MainWindow(QMainWindow):
 
         Args:
             result: 解锁结果对象。
+        """
+        self._statusBar.showMessage(result.toStatusBarMessage())
+
+    def _onShipCreateResult(self, result: ShipCreateResult) -> None:
+        """
+        舰娘新增结果事件处理。
+
+        Args:
+            result: 新增结果对象。
         """
         self._statusBar.showMessage(result.toStatusBarMessage())
 
