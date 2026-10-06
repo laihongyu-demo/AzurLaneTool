@@ -8,10 +8,18 @@ from typing import List, Any, Optional
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
-    QFrame, QAbstractItemView, QListView, QStyledItemDelegate
+    QFrame, QAbstractItemView, QListView
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QStringListModel, QModelIndex, QSize
-from PyQt5.QtGui import QFocusEvent, QMouseEvent
+from PyQt5.QtCore import (
+    Qt, pyqtSignal, QStringListModel, QModelIndex, QEvent, QTimer
+)
+
+# 仅这些焦点来源视为“用户主动交互”，才展开下拉列表；
+# 程序化分派焦点（切换页签、窗口激活、setFocus 等）为 OtherFocusReason，不展开。
+USER_FOCUS_REASONS = (Qt.MouseFocusReason,)
+
+# 输入框失焦后延迟收起下拉列表的毫秒数（留出点击列表项的处理时间）
+HIDE_DELAY_MS = 100
 
 
 class SearchableComboBox(QWidget):
@@ -20,6 +28,9 @@ class SearchableComboBox(QWidget):
 
     使用弹出窗口显示下拉列表，避免影响页面布局。
     支持模糊搜索、实时过滤。
+
+    展开时机仅限用户主动交互：点击输入框、在输入框内输入、点击下拉箭头；
+    程序化获得焦点不会展开。
     """
 
     currentIndexChanged = pyqtSignal(int)
@@ -83,22 +94,57 @@ class SearchableComboBox(QWidget):
     def _connectSignals(self) -> None:
         """连接信号与槽。"""
         self._lineEdit.textChanged.connect(self._onTextChanged)
-        self._lineEdit.focusInEvent = self._onFocusIn
+        self._lineEdit.installEventFilter(self)
         self._dropBtn.clicked.connect(self._togglePopup)
         self._listView.clicked.connect(self._onItemClicked)
         self._listView.activated.connect(self._onItemActivated)
 
+    def eventFilter(self, watched, event) -> bool:
+        """
+        输入框事件过滤。
+
+        - 用户点击输入框（鼠标按下）→ 展开下拉
+        - 用户点击输入框导致的焦点变化（MouseFocusReason）→ 展开下拉
+        - 输入框失焦 → 延迟收起下拉（容器自身为 NoFocus，无法承担该职责）
+        - 输入框被隐藏（如切换页签）→ 立即收起下拉
+        - 按下 Esc → 收起下拉
+
+        程序化获得焦点（切换页签、窗口激活、setFocus）不会展开。
+
+        Args:
+            watched: 事件来源控件。
+            event: 事件对象。
+
+        Returns:
+            是否拦截该事件（此处始终交由控件默认处理）。
+        """
+        if watched is self._lineEdit:
+            if event.type() == QEvent.FocusIn:
+                if event.reason() in USER_FOCUS_REASONS:
+                    self._showPopup()
+            elif event.type() == QEvent.MouseButtonPress:
+                if event.button() == Qt.LeftButton:
+                    self._showPopup()
+            elif event.type() == QEvent.FocusOut:
+                QTimer.singleShot(HIDE_DELAY_MS, self._hidePopup)
+            elif event.type() == QEvent.Hide:
+                self._hidePopup()
+            elif event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
+                self._hidePopup()
+
+        return super().eventFilter(watched, event)
+
     def _onTextChanged(self, text: str) -> None:
-        """文本变化事件处理。"""
+        """
+        文本变化事件处理。
+
+        仅在输入框持有焦点（用户正在输入）时展开下拉，
+        避免程序化的 clear()/setText() 误触发弹窗。
+        """
         self._filterItems(text)
-        if not self._popup_visible:
+        if self._lineEdit.hasFocus():
             self._showPopup()
         self._updatePopupSize()
-
-    def _onFocusIn(self, event: QFocusEvent) -> None:
-        """获得焦点事件处理。"""
-        QLineEdit.focusInEvent(self._lineEdit, event)
-        self._showPopup()
 
     def _togglePopup(self) -> None:
         """切换弹出窗口显示状态。"""
@@ -180,12 +226,6 @@ class SearchableComboBox(QWidget):
                     break
 
             self._hidePopup()
-
-    def focusOutEvent(self, event: QFocusEvent) -> None:
-        """失去焦点事件处理。"""
-        super().focusOutEvent(event)
-        from PyQt5.QtCore import QTimer
-        QTimer.singleShot(100, self._hidePopup)
 
     def addItem(self, text: str, data: Any = None) -> None:
         """
