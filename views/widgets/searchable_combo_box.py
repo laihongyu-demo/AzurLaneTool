@@ -7,7 +7,7 @@
 from typing import List, Any, Optional
 
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
+    QWidget, QApplication, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
     QFrame, QAbstractItemView, QListView
 )
 from PyQt5.QtCore import (
@@ -105,8 +105,10 @@ class SearchableComboBox(QWidget):
 
         - 用户点击输入框（鼠标按下）→ 展开下拉
         - 用户点击输入框导致的焦点变化（MouseFocusReason）→ 展开下拉
-        - 输入框失焦 → 延迟收起下拉（容器自身为 NoFocus，无法承担该职责）
-        - 输入框被隐藏（如切换页签）→ 立即收起下拉
+        - 输入框失焦 → 延迟收起下拉（容器自身为 NoFocus，无法承担该职责）；
+          但焦点被下拉弹窗自身夺走（PopupFocusReason）时不得收起，
+          否则会刚展开就被关掉、无法选择选项
+        - 输入框随页面被隐藏（如切换页签）→ 收起下拉
         - 按下 Esc → 收起下拉
 
         程序化获得焦点（切换页签、窗口激活、setFocus）不会展开。
@@ -126,13 +128,47 @@ class SearchableComboBox(QWidget):
                 if event.button() == Qt.LeftButton:
                     self._showPopup()
             elif event.type() == QEvent.FocusOut:
-                QTimer.singleShot(HIDE_DELAY_MS, self._hidePopup)
+                if event.reason() != Qt.PopupFocusReason:
+                    QTimer.singleShot(HIDE_DELAY_MS, self._hidePopupIfFocusOutside)
             elif event.type() == QEvent.Hide:
-                self._hidePopup()
+                if not self.isVisible():
+                    self._hidePopup()
             elif event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
                 self._hidePopup()
 
         return super().eventFilter(watched, event)
+
+    def _hidePopupIfFocusOutside(self) -> None:
+        """
+        延迟收起下拉，但焦点仍在本控件或下拉弹窗内部时保持展开。
+
+        弹窗夺取焦点的事件已在 eventFilter 中按 PopupFocusReason 排除；
+        此处再确认焦点确实落到了本控件之外，无法判定（focusWidget 为空）时保持展开，
+        避免“刚展开就被收起、无法选择选项”。
+        """
+        focused = QApplication.focusWidget()
+        if focused is None or self._containsWidget(focused):
+            return
+
+        self._hidePopup()
+
+    def _containsWidget(self, widget) -> bool:
+        """
+        判断控件是否属于本控件或下拉弹窗（沿父子链向上查找）。
+
+        Args:
+            widget: 待判断的控件。
+
+        Returns:
+            属于本控件或下拉弹窗时返回 True。
+        """
+        current = widget
+        while current is not None:
+            if current is self or current is self._popup:
+                return True
+            current = current.parentWidget()
+
+        return False
 
     def _onTextChanged(self, text: str) -> None:
         """

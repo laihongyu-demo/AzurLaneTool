@@ -35,20 +35,28 @@ class SearchableComboBoxTestCase(unittest.TestCase):
     """可搜索下拉框测试基类。"""
 
     def setUp(self):
-        """测试初始化。"""
+        """测试初始化：容器内放下拉框与一个兄弟控件，便于验证焦点移出。"""
+        self._container = QWidget()
+        layout = QVBoxLayout(self._container)
+
         self._combo = SearchableComboBox()
         self._combo.setMinimumWidth(220)
         for item in ITEMS:
             self._combo.addItem(item, item)
-        self._combo.resize(220, 30)
-        self._combo.show()
+
+        self._other = QPushButton("其他控件")
+
+        layout.addWidget(self._combo)
+        layout.addWidget(self._other)
+        self._container.resize(300, 120)
+        self._container.show()
         APP.processEvents()
 
     def tearDown(self):
         """测试清理。"""
         self._combo._hidePopup()
-        self._combo.hide()
-        self._combo.deleteLater()
+        self._container.hide()
+        self._container.deleteLater()
         APP.processEvents()
 
     def _sendFocusIn(self, reason) -> None:
@@ -75,9 +83,10 @@ class SearchableComboBoxTestCase(unittest.TestCase):
         self._combo._lineEdit.clearFocus()
         APP.processEvents()
 
-    def _waitForHide(self) -> None:
-        """等待延迟收起生效。"""
-        QTest.qWait(HIDE_DELAY_MS + 80)
+    def _focusOther(self) -> None:
+        """把焦点交给兄弟控件（真实焦点变化）。"""
+        self._other.setFocus()
+        APP.processEvents()
 
 
 class TestFocusTrigger(SearchableComboBoxTestCase):
@@ -175,16 +184,73 @@ class TestTextTrigger(SearchableComboBoxTestCase):
 class TestHideTrigger(SearchableComboBoxTestCase):
     """收起触发相关测试。"""
 
-    def testFocusOutHidesPopup(self):
-        """输入框失焦后延迟收起。"""
+    def testPopupFocusOutKeepsPopup(self):
+        """弹窗夺取焦点（PopupFocusReason）时不得收起 —— 本次回归的直接原因。"""
         self._sendFocusIn(Qt.MouseFocusReason)
         self.assertTrue(self._combo._popup_visible)
 
-        self._sendFocusOut()
-        self._waitForHide()
+        QApplication.sendEvent(
+            self._combo._lineEdit, QFocusEvent(QEvent.FocusOut, Qt.PopupFocusReason)
+        )
+        APP.processEvents()
+        QTest.qWait(HIDE_DELAY_MS + 120)
+
+        self.assertTrue(self._combo._popup_visible, "弹窗抢焦点不应导致下拉被收起")
+        self.assertTrue(self._combo._popup.isVisible())
+
+    def testClickExpandSurvivesHideDelay(self):
+        """点击展开后等待超过延迟时间仍保持展开（端到端复现原回归）。"""
+        QTest.mouseClick(self._combo._lineEdit, Qt.LeftButton)
+        APP.processEvents()
+        QTest.qWait(HIDE_DELAY_MS + 200)
+
+        self.assertTrue(self._combo._popup_visible, "点击展开后不应瞬间收起")
+        self.assertTrue(self._combo._popup.isVisible())
+
+    def testTypingExpandSurvivesHideDelay(self):
+        """输入内容展开后等待超过延迟时间仍保持展开。"""
+        self._combo._lineEdit.setFocus()
+        APP.processEvents()
+        self.assertTrue(self._combo._lineEdit.hasFocus())
+
+        QTest.keyClicks(self._combo._lineEdit, "Z")
+        APP.processEvents()
+        QTest.qWait(HIDE_DELAY_MS + 200)
+
+        self.assertTrue(self._combo._popup_visible, "输入展开后不应瞬间收起")
+
+    def testFocusToOtherWidgetHidesPopup(self):
+        """焦点真正转移到其他控件后收起下拉。"""
+        self._sendFocusIn(Qt.MouseFocusReason)
+        self.assertTrue(self._combo._popup_visible)
+
+        self._focusOther()
+        self.assertIs(APP.focusWidget(), self._other)
+
+        self._combo._hidePopupIfFocusOutside()
+
+        self.assertFalse(self._combo._popup_visible)
+
+    def testFocusToOtherWidgetHidesPopupAfterDelay(self):
+        """焦点转移到其他控件后，延迟收起同样生效。"""
+        self._sendFocusIn(Qt.MouseFocusReason)
+        self.assertTrue(self._combo._popup_visible)
+
+        self._focusOther()
+        QTest.qWait(HIDE_DELAY_MS + 150)
 
         self.assertFalse(self._combo._popup_visible)
         self.assertEqual(self._combo._dropBtn.text(), '▼')
+
+    def testFocusInsidePopupKeepsPopup(self):
+        """焦点落在下拉列表内部时不得收起（否则无法选择选项）。"""
+        self._sendFocusIn(Qt.MouseFocusReason)
+        self._combo._listView.setFocus()
+        APP.processEvents()
+
+        self._combo._hidePopupIfFocusOutside()
+
+        self.assertTrue(self._combo._popup_visible)
 
     def testEscapeHidesPopup(self):
         """按下 Esc 收起下拉。"""
