@@ -5,11 +5,11 @@
 """
 
 import sqlite3
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from models.codex_model import CodexGroupModel, CodexTpModel, CodexBuffModel
 from repositories.base_repository import BaseRepository
-from utils.codex_options import ID_PREFIX_PAD_WIDTH, getGroupIdPrefix
+from utils.codex_options import ID_PREFIX_PAD_WIDTH, LEVELS_FULL_TECH, getGroupIdPrefix
 from utils.exceptions import DatabaseError
 from utils.sql_loader import loadSqlFile
 
@@ -318,28 +318,37 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"查询布里需求失败: {e}")
 
-    def getRemainingLevelingCount(self) -> int:
+    def getRemainingLevelingCount(self, extra_excluded_levels: Optional[Sequence[str]] = None) -> int:
         """
-        获取剩余练级数量。
+        获取剩余练级数量（默认口径：排除已满120级的档位）。
 
         查询条件：
-        - ship_level NOT IN ('认知觉醒五阶', '认知觉醒Ⅱ')
+        - ship_level NOT IN LEVELS_FULL_TECH（认知觉醒五阶 / 认知觉醒Ⅱ）
         - ship_group IN ('常规', 'META', '方案')
         - ship_camp != 'UNIV'
+        - 可选：额外排除的等级档位
+
+        Args:
+            extra_excluded_levels: 需要额外排除的 ship_level 取值（如一阶、四阶）。
 
         Returns:
             符合条件的舰娘数量。
+
+        Raises:
+            DatabaseError: 当数据库查询失败时抛出。
         """
-        sql = """
+        excluded_levels = list(LEVELS_FULL_TECH) + list(extra_excluded_levels or ())
+        placeholders = ', '.join('?' for _ in excluded_levels)
+        sql = f"""
             SELECT COUNT(*) as count
             FROM codex_group
-            WHERE ship_level NOT IN ('认知觉醒五阶', '认知觉醒Ⅱ')
+            WHERE ship_level NOT IN ({placeholders})
               AND ship_group IN ('常规', 'META', '方案')
               AND ship_camp != 'UNIV'
         """
         try:
             with self._getConnection() as conn:
-                cursor = conn.execute(sql)
+                cursor = conn.execute(sql, tuple(excluded_levels))
                 row = cursor.fetchone()
                 return row['count'] if row else 0
         except sqlite3.Error as e:

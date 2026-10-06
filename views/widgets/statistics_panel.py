@@ -118,7 +118,13 @@ class StatisticsPanel(QWidget):
         self._totalTpCard = StatCard("科技点总值", "0")
         self._unlockedTpCard = StatCard("当前科技点", "0")
         self._tpRateCard = StatCard("科技点完成率", "0%")
-        self._remainingLevelingCard = StatCard("剩余练级数量", "0")
+        self._remainingLevelingCard = StatCard("剩余练级数量", "0")  # 格式："需消耗心智单元（还需练级）"
+        self._remainingLevelingCard.setToolTip(
+            "主值：未满 120 级、仍需消耗心智单元的舰娘数"
+            "（认知觉醒四阶已不需材料，不计入）\n"
+            "括弧：还需要练级的舰娘数"
+            "（认知觉醒一阶经验已满足 120，不计入）"
+        )
 
         tp_stats_layout.addWidget(self._totalTpCard)
         tp_stats_layout.addWidget(self._unlockedTpCard)
@@ -293,8 +299,9 @@ class StatisticsPanel(QWidget):
             self._trialBulinCard.setValue(str(bulin_stats.get("trial_bulin_mkii", 0)))
             self._specializedBulinCard.setValue(str(bulin_stats.get("specialized_bulin_mkiii", 0)))
 
-            remaining_leveling = stats.get("remaining_leveling", 0)
-            self._remainingLevelingCard.setValue(str(remaining_leveling))
+            material_pending = stats.get("material_pending", 0)
+            leveling_required = stats.get("leveling_required", 0)
+            self._remainingLevelingCard.setValue(f"{material_pending}（{leveling_required}）")
 
         except DatabaseError as e:
             self._showError(f"数据库错误: {e}")

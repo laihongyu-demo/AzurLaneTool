@@ -7,6 +7,7 @@
 from typing import Dict, Any, Optional, List
 
 from repositories.codex_repository import CodexGroupRepository, CodexTpRepository
+from utils import codex_options as options
 from utils.exceptions import DatabaseError
 
 
@@ -144,12 +145,39 @@ class StatisticsService:
 
     def getRemainingLevelingCount(self) -> int:
         """
-        获取剩余练级数量。
+        获取剩余练级数量（原定义口径）。
+
+        排除已满120级的档位（认知觉醒五阶、认知觉醒Ⅱ），
+        即“未满 120 级”的舰娘总数。
 
         Returns:
             符合条件的舰娘数量。
         """
         return self._group_repository.getRemainingLevelingCount()
+
+    def getMaterialPendingCount(self) -> int:
+        """
+        获取仍需消耗心智单元的舰娘数量（主值口径）。
+
+        在剩余练级基础上再排除“已不需要消耗心智单元”的档位（认知觉醒四阶），
+        即：未觉醒、认知觉醒一阶、二阶、三阶。
+
+        Returns:
+            符合条件的舰娘数量。
+        """
+        return self._group_repository.getRemainingLevelingCount(options.LEVELS_NO_MATERIAL)
+
+    def getLevelingRequiredCount(self) -> int:
+        """
+        获取还需要练级的舰娘数量（括弧口径）。
+
+        在剩余练级基础上再排除“经验已满足120级”的档位（认知觉醒一阶），
+        即：未觉醒、认知觉醒二阶、三阶、四阶。
+
+        Returns:
+            符合条件的舰娘数量。
+        """
+        return self._group_repository.getRemainingLevelingCount(options.LEVELS_EXP_SUFFICIENT)
 
     def getAllStatistics(self) -> Dict[str, Any]:
         """
@@ -157,13 +185,17 @@ class StatisticsService:
 
         Returns:
             包含所有统计数据的字典，预留扩展接口。
+            remaining_leveling 为兼容保留的原定义口径，
+            material_pending / leveling_required 为面板展示的两个口径。
         """
         return {
             "unlock": self.getUnlockStatistics(),
             "tp": self.getTpStatistics(),
             "bulin": self.getBulinRequirements(),
             "oath": self.getOathStatistics(),
-            "remaining_leveling": self.getRemainingLevelingCount()
+            "remaining_leveling": self.getRemainingLevelingCount(),
+            "material_pending": self.getMaterialPendingCount(),
+            "leveling_required": self.getLevelingRequiredCount()
         }
 
     def refreshStatistics(self) -> Dict[str, Any]:
