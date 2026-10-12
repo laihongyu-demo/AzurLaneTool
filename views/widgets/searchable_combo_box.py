@@ -5,6 +5,7 @@
 """
 
 from typing import List, Any, Optional
+import time
 
 from PyQt5.QtWidgets import (
     QWidget, QApplication, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton,
@@ -20,6 +21,9 @@ USER_FOCUS_REASONS = (Qt.MouseFocusReason,)
 
 # 输入框失焦后延迟收起下拉列表的毫秒数（留出点击列表项的处理时间）
 HIDE_DELAY_MS = 100
+
+# 判断“弹窗是被本次点击收起”时，允许自动收起时刻略早于按下时刻的容差（秒）
+AUTO_HIDE_PRESS_TOLERANCE_S = 0.2
 
 
 class SearchableComboBox(QWidget):
@@ -47,6 +51,11 @@ class SearchableComboBox(QWidget):
         self._filtered_texts: List[str] = []
         self._current_index = -1
         self._popup_visible = False
+        # 三角按钮开关的判定依据（详见 _togglePopup）
+        self._auto_hidden_at = 0.0
+        self._drop_press_started_at = 0.0
+        self._popup_open_at_press = False
+        self._hidingByCode = False
 
         self._initUi()
         self._connectSignals()
@@ -105,9 +114,20 @@ class SearchableComboBox(QWidget):
         self._lineEdit.installEventFilter(self)
         self._popup.installEventFilter(self)
         self._listView.installEventFilter(self)
+        self._dropBtn.pressed.connect(self._onDropButtonPressed)
         self._dropBtn.clicked.connect(self._togglePopup)
         self._listView.clicked.connect(self._onItemClicked)
         self._listView.activated.connect(self._onItemActivated)
+
+    def _onDropButtonPressed(self) -> None:
+        """
+        三角按钮按下事件处理。
+
+        记录按下时刻与“按下瞬间弹窗是否展开”，用于识别
+        “本次点击已被 Qt 用于收起弹窗”的情况，避免松开时又把它展开。
+        """
+        self._drop_press_started_at = time.monotonic()
+        self._popup_open_at_press = self._popup.isVisible() or self._popup_visible
 
     def eventFilter(self, watched, event) -> bool:
         """
@@ -160,9 +180,17 @@ class SearchableComboBox(QWidget):
         return super().eventFilter(watched, event)
 
     def _syncPopupHidden(self) -> None:
-        """弹窗被隐藏时同步内部状态与按钮文案（不改变焦点）。"""
+        """
+        弹窗被隐藏时同步内部状态与按钮文案（不改变焦点）。
+
+        若并非本控件代码主动收起，则记录时刻：这通常意味着 Qt 因
+        “点击弹窗外部”把弹窗关掉了，而那次点击可能还会落到三角按钮上。
+        """
         self._popup_visible = False
         self._dropBtn.setText("▼")
+
+        if not self._hidingByCode:
+            self._auto_hidden_at = time.monotonic()
 
     def _forwardKeyToLineEdit(self, event) -> None:
         """
@@ -241,15 +269,32 @@ class SearchableComboBox(QWidget):
 
     def _togglePopup(self) -> None:
         """
-        切换弹出窗口显示状态。
+        切换弹出窗口显示状态（三角按钮点击）。
 
-        以弹窗的实际可见性为准，避免内部状态与界面不同步
-        （Qt 因点击弹窗之外自行关闭时不会走 _hidePopup）。
+        以弹窗的实际可见性为准；若本次点击已经把展开中的弹窗收起
+        （Qt 会先因“点击弹窗外部”关掉弹窗，随后这次点击才到达按钮），
+        则本次点击只负责收起，不再重新展开。
         """
+        # 本次点击是否已经收起过弹窗：按下瞬间弹窗是展开的，或弹窗刚被自动收起
+        closed_by_this_click = self._popup_open_at_press or (
+            self._drop_press_started_at > 0.0
+            and self._auto_hidden_at > 0.0
+            and self._auto_hidden_at
+            >= self._drop_press_started_at - AUTO_HIDE_PRESS_TOLERANCE_S
+        )
+        self._popup_open_at_press = False
+        self._drop_press_started_at = 0.0
+
         if self._popup.isVisible():
             self._hidePopup()
-        else:
-            self._showPopup()
+            return
+
+        if closed_by_this_click:
+            self._auto_hidden_at = 0.0
+            self._hidePopup()
+            return
+
+        self._showPopup()
 
     def _showPopup(self) -> None:
         """显示弹出窗口。"""
@@ -266,6 +311,7 @@ class SearchableComboBox(QWidget):
         self._updatePopupPosition()
         self._popup.show()
         self._popup_visible = True
+        self._auto_hidden_at = 0.0
         self._dropBtn.setText("▲")
         # 弹窗不接收焦点，键盘输入始终留在输入框内
         self._lineEdit.setFocus()
@@ -278,7 +324,9 @@ class SearchableComboBox(QWidget):
         输入框会表现为“无法编辑”（点选舰娘后再开关下拉时尤其明显）。
         """
         was_visible = self._popup.isVisible()
+        self._hidingByCode = True
         self._popup.hide()
+        self._hidingByCode = False
         self._popup_visible = False
         self._dropBtn.setText("▼")
 

@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (  # noqa: E402
 )
 
 from views.widgets.searchable_combo_box import (  # noqa: E402
-    HIDE_DELAY_MS, USER_FOCUS_REASONS, SearchableComboBox
+    AUTO_HIDE_PRESS_TOLERANCE_S, HIDE_DELAY_MS, USER_FOCUS_REASONS, SearchableComboBox
 )
 
 APP = QApplication.instance() or QApplication([])
@@ -288,6 +288,81 @@ class TestHideTrigger(SearchableComboBoxTestCase):
         self.assertFalse(self._combo._popup.isVisible())
 
 
+class TestDropButtonToggle(SearchableComboBoxTestCase):
+    """三角按钮开关测试类（“按住收起、松开又展开”的回归用例）。"""
+
+    def testClickOpensThenCloses(self):
+        """常规点击：第一次展开、第二次收起。"""
+        QTest.mouseClick(self._combo._dropBtn, Qt.LeftButton)
+        APP.processEvents()
+        self.assertTrue(self._combo._popup_visible)
+
+        QTest.mouseClick(self._combo._dropBtn, Qt.LeftButton)
+        APP.processEvents()
+        self.assertFalse(self._combo._popup_visible)
+        self.assertEqual(self._combo._dropBtn.text(), '▼')
+
+    def testToggleAgainAfterClosing(self):
+        """收起后再次点击应重新展开（不会被误判为同一次点击）。"""
+        for _ in range(2):
+            QTest.mouseClick(self._combo._dropBtn, Qt.LeftButton)
+            APP.processEvents()
+        self.assertFalse(self._combo._popup_visible)
+
+        QTest.mouseClick(self._combo._dropBtn, Qt.LeftButton)
+        APP.processEvents()
+        self.assertTrue(self._combo._popup_visible)
+
+    def testPopupAutoHiddenBeforePressKeepsClosed(self):
+        """弹窗已被本次点击的按下动作收起时，松开不得重新展开。"""
+        self._combo._togglePopup()
+        APP.processEvents()
+        self.assertTrue(self._combo._popup_visible)
+
+        # 模拟 Qt 在按下瞬间因“点击弹窗外部”关闭弹窗（Hide → 状态同步）
+        self._combo._popup.hide()
+        APP.processEvents()
+        self.assertFalse(self._combo._popup_visible)
+
+        QTest.mouseClick(self._combo._dropBtn, Qt.LeftButton)
+        APP.processEvents()
+
+        self.assertFalse(self._combo._popup_visible, '松开后不应重新展开')
+        self.assertEqual(self._combo._dropBtn.text(), '▼')
+
+    def testPopupAutoHiddenDuringPressKeepsClosed(self):
+        """按下时弹窗仍展开、按下过程中被自动收起，松开同样不得展开。"""
+        self._combo._togglePopup()
+        APP.processEvents()
+        self.assertTrue(self._combo._popup_visible)
+
+        QTest.mousePress(self._combo._dropBtn, Qt.LeftButton)
+        APP.processEvents()
+        self.assertTrue(self._combo._popup_open_at_press)
+
+        self._combo._popup.hide()          # 按下过程中 Qt 自动收起
+        APP.processEvents()
+
+        QTest.mouseRelease(self._combo._dropBtn, Qt.LeftButton)
+        APP.processEvents()
+
+        self.assertFalse(self._combo._popup_visible, '松开后不应重新展开')
+
+    def testLaterClickAfterAutoHideStillOpens(self):
+        """弹窗因点击别处被收起后，稍后再点三角按钮仍能正常展开。"""
+        self._combo._togglePopup()
+        APP.processEvents()
+        self._combo._popup.hide()          # 点击别处导致的自动收起
+        APP.processEvents()
+
+        QTest.qWait(int(AUTO_HIDE_PRESS_TOLERANCE_S * 1000) + 120)
+
+        QTest.mouseClick(self._combo._dropBtn, Qt.LeftButton)
+        APP.processEvents()
+
+        self.assertTrue(self._combo._popup_visible, '不应把这次点击误判为收起动作')
+
+
 class TestEditabilityAndStateSync(SearchableComboBoxTestCase):
     """输入框可编辑性与弹窗状态同步测试类（“无法编辑输入框”问题的回归用例）。"""
 
@@ -338,7 +413,7 @@ class TestEditabilityAndStateSync(SearchableComboBoxTestCase):
         self.assertTrue(self._combo._lineEdit.text().endswith("X"))
 
     def testStateSyncsWhenQtClosesPopupItself(self):
-        """Qt 自行关闭弹窗（如点击弹窗之外）后状态同步，三角按钮不会失效。"""
+        """Qt 自行关闭弹窗（如点击弹窗之外）后，内部状态与按钮文案同步。"""
         self._combo._togglePopup()
         APP.processEvents()
         self.assertTrue(self._combo._popup_visible)
@@ -349,7 +424,8 @@ class TestEditabilityAndStateSync(SearchableComboBoxTestCase):
         self.assertFalse(self._combo._popup_visible)
         self.assertEqual(self._combo._dropBtn.text(), '▼')
 
-        # 状态未错位：下一次点击应重新展开，而不是“点不动”
+        # 该次自动收起会被视为“同一次点击的收起动作”，稍后的点击可正常展开
+        QTest.qWait(int(AUTO_HIDE_PRESS_TOLERANCE_S * 1000) + 120)
         self._combo._togglePopup()
         APP.processEvents()
         self.assertTrue(self._combo._popup_visible)
