@@ -9,9 +9,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Dict
 
 from models.codex_model import CodexGroupModel
-from repositories.codex_repository import (
-    CodexGroupRepository, CodexTpRepository, CodexBuffRepository
-)
+from repositories.codex_repository import CodexGroupRepository, CodexTpRepository
 from utils.db_connection import DatabaseContext
 from utils.exceptions import DatabaseError, ValidationError
 
@@ -71,20 +69,19 @@ class LimitBreakService:
     def __init__(
         self,
         group_repository: Optional[CodexGroupRepository] = None,
-        tp_repository: Optional[CodexTpRepository] = None,
-        buff_repository: Optional[CodexBuffRepository] = None
+        tp_repository: Optional[CodexTpRepository] = None
     ):
         """
         初始化界限突破服务。
 
+        科技属性（codex_buff）没有「满星」条件，故本服务不依赖 Buff 数据访问实例。
+
         Args:
             group_repository: 舰娘图鉴组数据访问实例。
             tp_repository: TP数据访问实例。
-            buff_repository: Buff数据访问实例。
         """
         self._group_repository = group_repository or CodexGroupRepository()
         self._tp_repository = tp_repository or CodexTpRepository()
-        self._buff_repository = buff_repository or CodexBuffRepository()
 
     def getLimitBreakableShips(self) -> List[CodexGroupModel]:
         """
@@ -124,7 +121,8 @@ class LimitBreakService:
         """
         更新满星相关的条件解锁状态。
 
-        在同一连接中更新tp表和buff表的满星条件记录。
+        仅更新科技点表的满星条件：科技属性（codex_buff）不存在「满星」条件，
+        其条件只有「解锁」与「Lv.120」，因此无需也无法更新属性表。
 
         Args:
             conn: 数据库连接。
@@ -133,14 +131,11 @@ class LimitBreakService:
         tp_sql = "UPDATE codex_tp SET tp_unlock = 'Y' WHERE codex_id = ? AND unlock_cond = '满星'"
         conn.execute(tp_sql, (codex_id,))
 
-        buff_sql = "UPDATE codex_buff SET buff_unlock = 'Y' WHERE codex_id = ? AND buff_cond = '满星'"
-        conn.execute(buff_sql, (codex_id,))
-
     def limitBreak(self, codex_id) -> LimitBreakResult:
         """
         执行舰娘界限突破（星级+1）。
 
-        将舰娘星级提升1级，若达到满星则同步更新tp表和buff表的满星条件。
+        将舰娘星级提升1级，若达到满星则同步更新科技点的满星条件。
 
         Args:
             codex_id: 图鉴ID。
@@ -221,7 +216,7 @@ class LimitBreakService:
         """
         执行舰娘界限突破·MAX（直接提升至满星）。
 
-        将舰娘星级直接设置为满星，若原星级未满则同步更新tp表和buff表的满星条件。
+        将舰娘星级直接设置为满星，若原星级未满则同步更新科技点的满星条件。
 
         Args:
             codex_id: 图鉴ID。

@@ -966,24 +966,3 @@ class CodexBuffRepository(BaseRepository[CodexBuffModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"查询Buff解锁详情失败: {e}")
 
-    def updateFullStarByCodexId(self, codex_id: str) -> int:
-        """
-        更新指定舰娘的满星相关Buff记录。
-
-        Args:
-            codex_id: 图鉴ID。
-
-        Returns:
-            更新的记录数。
-        """
-        sql = f"""
-            UPDATE {self.TABLE_NAME}
-            SET buff_unlock = 'Y'
-            WHERE codex_id = ? AND buff_cond = '满星'
-        """
-        try:
-            with self._getConnection() as conn:
-                cursor = conn.execute(sql, (codex_id,))
-                return cursor.rowcount
-        except sqlite3.Error as e:
-            raise DatabaseError(f"更新Buff满星状态失败: {e}")
