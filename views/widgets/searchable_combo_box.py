@@ -69,8 +69,14 @@ class SearchableComboBox(QWidget):
         layout.addWidget(self._lineEdit)
         layout.addWidget(self._dropBtn)
 
-        self._popup = QFrame(self, Qt.Popup | Qt.FramelessWindowHint)
+        self._popup = QFrame(
+            self,
+            Qt.Popup | Qt.FramelessWindowHint | Qt.WindowDoesNotAcceptFocus
+        )
         self._popup.setAttribute(Qt.WA_TranslucentBackground, False)
+        # 弹窗展示时不抢占窗口激活，避免主窗口的输入框失去键盘输入
+        self._popup.setAttribute(Qt.WA_ShowWithoutActivating, True)
+        self._popup.setFocusPolicy(Qt.NoFocus)
 
         popup_layout = QVBoxLayout(self._popup)
         popup_layout.setContentsMargins(0, 0, 0, 0)
@@ -83,6 +89,8 @@ class SearchableComboBox(QWidget):
         self._listView.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._listView.setMinimumHeight(0)
         self._listView.setMaximumHeight(200)
+        # 列表不参与焦点链：避免展开后键盘输入落到列表上，导致输入框表现为无法编辑
+        self._listView.setFocusPolicy(Qt.NoFocus)
 
         self._model = QStringListModel(self)
         self._listView.setModel(self._model)
@@ -95,6 +103,8 @@ class SearchableComboBox(QWidget):
         """连接信号与槽。"""
         self._lineEdit.textChanged.connect(self._onTextChanged)
         self._lineEdit.installEventFilter(self)
+        self._popup.installEventFilter(self)
+        self._listView.installEventFilter(self)
         self._dropBtn.clicked.connect(self._togglePopup)
         self._listView.clicked.connect(self._onItemClicked)
         self._listView.activated.connect(self._onItemActivated)
@@ -120,6 +130,17 @@ class SearchableComboBox(QWidget):
         Returns:
             是否拦截该事件（此处始终交由控件默认处理）。
         """
+        if watched is self._popup or watched is self._listView:
+            if event.type() == QEvent.KeyPress:
+                # 弹窗模式下 Qt 会把按键投给弹窗控件，这里转回输入框，
+                # 保证展开下拉后仍能继续输入、删除
+                self._forwardKeyToLineEdit(event)
+                return True
+            if watched is self._popup and event.type() == QEvent.Hide:
+                # Qt 也会因点击弹窗之外自行关闭弹窗，这里同步内部状态与按钮文案
+                self._syncPopupHidden()
+            return super().eventFilter(watched, event)
+
         if watched is self._lineEdit:
             if event.type() == QEvent.FocusIn:
                 if event.reason() in USER_FOCUS_REASONS:
@@ -137,6 +158,42 @@ class SearchableComboBox(QWidget):
                 self._hidePopup()
 
         return super().eventFilter(watched, event)
+
+    def _syncPopupHidden(self) -> None:
+        """弹窗被隐藏时同步内部状态与按钮文案（不改变焦点）。"""
+        self._popup_visible = False
+        self._dropBtn.setText("▼")
+
+    def _forwardKeyToLineEdit(self, event) -> None:
+        """
+        把弹窗/列表收到的按键转发给输入框。
+
+        Qt 处于弹窗模式（Qt.Popup）时，键盘事件会被投递给弹窗控件；
+        若不转发，展开下拉后输入框会表现为“无法继续输入或删除”。
+
+        Args:
+            event: 按键事件。
+        """
+        edit = self._lineEdit
+        key = event.key()
+        shift = bool(event.modifiers() & Qt.ShiftModifier)
+
+        if key == Qt.Key_Escape:
+            self._hidePopup()
+        elif key == Qt.Key_Backspace:
+            edit.backspace()
+        elif key == Qt.Key_Delete:
+            edit.del_()
+        elif key == Qt.Key_Left:
+            edit.cursorBackward(shift)
+        elif key == Qt.Key_Right:
+            edit.cursorForward(shift)
+        elif key == Qt.Key_Home:
+            edit.home(shift)
+        elif key == Qt.Key_End:
+            edit.end(shift)
+        elif event.text() and not (event.modifiers() & (Qt.ControlModifier | Qt.AltModifier)):
+            edit.insert(event.text())
 
     def _hidePopupIfFocusOutside(self) -> None:
         """
@@ -183,8 +240,13 @@ class SearchableComboBox(QWidget):
         self._updatePopupSize()
 
     def _togglePopup(self) -> None:
-        """切换弹出窗口显示状态。"""
-        if self._popup_visible:
+        """
+        切换弹出窗口显示状态。
+
+        以弹窗的实际可见性为准，避免内部状态与界面不同步
+        （Qt 因点击弹窗之外自行关闭时不会走 _hidePopup）。
+        """
+        if self._popup.isVisible():
             self._hidePopup()
         else:
             self._showPopup()
@@ -197,19 +259,32 @@ class SearchableComboBox(QWidget):
         self._filterItems(self._lineEdit.text())
 
         if self._model.rowCount() == 0:
+            # 无匹配项时不展示，同时确保状态与按钮文案一致
+            self._hidePopup()
             return
 
         self._updatePopupPosition()
         self._popup.show()
         self._popup_visible = True
         self._dropBtn.setText("▲")
+        # 弹窗不接收焦点，键盘输入始终留在输入框内
+        self._lineEdit.setFocus()
 
     def _hidePopup(self) -> None:
-        """隐藏弹出窗口。"""
-        if self._popup_visible:
-            self._popup.hide()
-            self._popup_visible = False
-            self._dropBtn.setText("▼")
+        """
+        隐藏弹出窗口，并把焦点交还输入框。
+
+        弹窗在不同平台可能短暂持有焦点或键盘，收起后若不交还，
+        输入框会表现为“无法编辑”（点选舰娘后再开关下拉时尤其明显）。
+        """
+        was_visible = self._popup.isVisible()
+        self._popup.hide()
+        self._popup_visible = False
+        self._dropBtn.setText("▼")
+
+        focused = QApplication.focusWidget()
+        if was_visible and (focused is None or self._containsWidget(focused)):
+            self._lineEdit.setFocus()
 
     def _updatePopupPosition(self) -> None:
         """更新弹出窗口位置。"""

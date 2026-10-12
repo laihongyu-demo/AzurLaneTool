@@ -288,6 +288,189 @@ class TestHideTrigger(SearchableComboBoxTestCase):
         self.assertFalse(self._combo._popup.isVisible())
 
 
+class TestEditabilityAndStateSync(SearchableComboBoxTestCase):
+    """输入框可编辑性与弹窗状态同步测试类（“无法编辑输入框”问题的回归用例）。"""
+
+    def testPopupAndListDoNotAcceptFocus(self):
+        """弹窗与列表都不接受焦点，键盘输入始终留在输入框。"""
+        self.assertEqual(self._combo._listView.focusPolicy(), Qt.NoFocus)
+        self.assertEqual(self._combo._popup.focusPolicy(), Qt.NoFocus)
+
+    def testPopupShowsWithoutActivating(self):
+        """弹窗展示时不抢占窗口激活。"""
+        self.assertTrue(self._combo._popup.testAttribute(Qt.WA_ShowWithoutActivating))
+
+    def testExpandKeepsFocusInLineEdit(self):
+        """展开弹窗后焦点仍在输入框，可直接继续输入。"""
+        self._combo._lineEdit.setFocus()
+        APP.processEvents()
+
+        QTest.mouseClick(self._combo._lineEdit, Qt.LeftButton)
+        APP.processEvents()
+
+        self.assertTrue(self._combo._popup_visible)
+        self.assertTrue(self._combo._lineEdit.hasFocus())
+        self.assertFalse(self._combo._listView.hasFocus())
+
+    def testStillEditableAfterSelectAndToggle(self):
+        """选完舰娘再开关一次下拉后，输入框仍可编辑（用户报告的复现顺序）。"""
+        self._combo._lineEdit.setFocus()
+        self._combo._lineEdit.clear()
+        APP.processEvents()
+
+        # 展开 → 选择 → 再展开 → 收起
+        self._combo._togglePopup()
+        APP.processEvents()
+        self._combo._selectItem(0)
+        APP.processEvents()
+        self._combo._togglePopup()
+        APP.processEvents()
+        self._combo._togglePopup()
+        APP.processEvents()
+
+        self.assertFalse(self._combo._popup_visible)
+
+        before = self._combo._lineEdit.text()
+        QTest.keyClicks(self._combo._lineEdit, "X")
+        APP.processEvents()
+
+        self.assertNotEqual(self._combo._lineEdit.text(), before)
+        self.assertTrue(self._combo._lineEdit.text().endswith("X"))
+
+    def testStateSyncsWhenQtClosesPopupItself(self):
+        """Qt 自行关闭弹窗（如点击弹窗之外）后状态同步，三角按钮不会失效。"""
+        self._combo._togglePopup()
+        APP.processEvents()
+        self.assertTrue(self._combo._popup_visible)
+
+        self._combo._popup.hide()          # 模拟 Qt 直接关闭，未走 _hidePopup
+        APP.processEvents()
+
+        self.assertFalse(self._combo._popup_visible)
+        self.assertEqual(self._combo._dropBtn.text(), '▼')
+
+        # 状态未错位：下一次点击应重新展开，而不是“点不动”
+        self._combo._togglePopup()
+        APP.processEvents()
+        self.assertTrue(self._combo._popup_visible)
+        self.assertEqual(self._combo._dropBtn.text(), '▲')
+
+    def testNoMatchesKeepsStateConsistent(self):
+        """无匹配项时不展示且状态一致（按钮不会停在展开态）。"""
+        self._combo._lineEdit.setFocus()
+        APP.processEvents()
+
+        self._combo._lineEdit.setText("不存在的舰娘名称")
+        APP.processEvents()
+
+        self.assertEqual(self._combo._model.rowCount(), 0)
+        self.assertFalse(self._combo._popup_visible)
+        self.assertFalse(self._combo._popup.isVisible())
+        self.assertEqual(self._combo._dropBtn.text(), '▼')
+
+    def testMouseClickOnItemSelects(self):
+        """鼠标点击列表项仍可正常选中（NoFocus 不影响点击投递）。"""
+        self._combo._lineEdit.setFocus()
+        self._combo._lineEdit.clear()
+        APP.processEvents()
+
+        self._combo._togglePopup()
+        APP.processEvents()
+        self.assertTrue(self._combo._popup_visible)
+
+        rect = self._combo._listView.visualRect(self._combo._model.index(0, 0))
+        QTest.mouseClick(
+            self._combo._listView.viewport(), Qt.LeftButton, Qt.NoModifier, rect.center()
+        )
+        APP.processEvents()
+
+        self.assertEqual(self._combo.currentIndex(), 0)
+        self.assertEqual(self._combo._lineEdit.text(), ITEMS[0])
+        self.assertFalse(self._combo._popup_visible)
+
+
+class TestKeyForwarding(SearchableComboBoxTestCase):
+    """弹窗接管按键时的转发测试类（“展开后无法继续删除/输入”的回归用例）。"""
+
+    def _sendKeyToPopup(self, key, text='') -> None:
+        """把按键事件投递给弹窗控件（模拟 Qt 弹窗模式的投递目标）。"""
+        QApplication.sendEvent(
+            self._combo._popup, QKeyEvent(QEvent.KeyPress, key, Qt.NoModifier, text)
+        )
+        APP.processEvents()
+
+    def _openWithText(self, text: str) -> None:
+        """准备文本并确保下拉处于展开状态。"""
+        self._combo._lineEdit.setFocus()
+        self._combo._lineEdit.setText(text)
+        APP.processEvents()
+
+        if not self._combo._popup_visible:
+            self._combo._togglePopup()
+            APP.processEvents()
+
+        self.assertTrue(self._combo._popup_visible)
+
+    def testPopupDoesNotAcceptFocusFlag(self):
+        """弹窗带 WindowDoesNotAcceptFocus 标志，避免抢走系统键盘。"""
+        self.assertTrue(self._combo._popup.windowFlags() & Qt.WindowDoesNotAcceptFocus)
+        self.assertTrue(self._combo._popup.testAttribute(Qt.WA_ShowWithoutActivating))
+
+    def testBackspaceOnPopupDeletesText(self):
+        """弹窗收到退格时应转发给输入框删除字符。"""
+        self._openWithText('拉菲')
+        self.assertEqual(self._combo._lineEdit.text(), '拉菲')
+
+        self._sendKeyToPopup(Qt.Key_Backspace)
+
+        self.assertEqual(self._combo._lineEdit.text(), '拉')
+        self.assertTrue(self._combo._popup_visible, '删除后下拉应保持展开以便继续筛选')
+
+    def testRepeatedBackspaceOnPopupKeepsDeleting(self):
+        """连续退格持续生效（用户报告的失效点）。"""
+        self._openWithText('拉菲')
+
+        for expected in ('拉', ''):
+            self._sendKeyToPopup(Qt.Key_Backspace)
+            self.assertEqual(self._combo._lineEdit.text(), expected)
+
+    def testPrintableKeyOnPopupInsertsText(self):
+        """弹窗收到可打印字符时插入到输入框并完成过滤。"""
+        self._openWithText('Z')
+
+        self._sendKeyToPopup(Qt.Key_1, '1')
+
+        self.assertEqual(self._combo._lineEdit.text(), 'Z1')
+
+    def testDeleteKeyOnPopupDeletesForward(self):
+        """弹窗收到 Delete 键时删除光标后的字符。"""
+        self._openWithText('拉菲')
+        self._combo._lineEdit.setCursorPosition(0)
+
+        self._sendKeyToPopup(Qt.Key_Delete)
+
+        self.assertEqual(self._combo._lineEdit.text(), '菲')
+
+    def testEscapeOnPopupHidesPopup(self):
+        """弹窗收到 Esc 时收起下拉。"""
+        self._openWithText('拉菲')
+
+        self._sendKeyToPopup(Qt.Key_Escape)
+
+        self.assertFalse(self._combo._popup_visible)
+
+    def testListViewKeysAlsoForwarded(self):
+        """按键投递到列表控件时同样转发给输入框。"""
+        self._openWithText('拉菲')
+
+        QApplication.sendEvent(
+            self._combo._listView, QKeyEvent(QEvent.KeyPress, Qt.Key_Backspace, Qt.NoModifier)
+        )
+        APP.processEvents()
+
+        self.assertEqual(self._combo._lineEdit.text(), '拉')
+
+
 class TestTabSwitchScenario(unittest.TestCase):
     """切换页签场景回归测试（本次 bug 的直接复现场景）。"""
 
