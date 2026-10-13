@@ -100,12 +100,12 @@ FIXTURE = [
     ('13', '认知觉醒五阶', 'META', 'META', 'Y'),
     ('14', '认知觉醒五阶', '方案', '皇家海军', 'Y'),
     ('15', '认知觉醒五阶', '常规', '重樱群岛', 'Y'),
-    ('16', '认知觉醒Ⅱ', '常规', '白鹰联邦', 'Y'),
-    ('17', '认知觉醒Ⅱ', '常规', '白鹰联邦', 'Y'),
-    ('18', '认知觉醒Ⅱ', 'META', 'META', 'Y'),
-    ('19', '认知觉醒Ⅱ', '方案', '皇家海军', 'Y'),
-    ('20', '认知觉醒Ⅱ', '常规', '重樱群岛', 'Y'),
-    ('21', '认知觉醒Ⅱ', '常规', '铁血公国', 'Y'),
+    ('16', '认知觉醒II', '常规', '白鹰联邦', 'Y'),
+    ('17', '认知觉醒II', '常规', '白鹰联邦', 'Y'),
+    ('18', '认知觉醒II', 'META', 'META', 'Y'),
+    ('19', '认知觉醒II', '方案', '皇家海军', 'Y'),
+    ('20', '认知觉醒II', '常规', '重樱群岛', 'Y'),
+    ('21', '认知觉醒II', '常规', '铁血公国', 'Y'),
     ('22', '认知觉醒一阶', '常规', 'UNIV', 'Y'),    # 阵营 UNIV → 不参与统计
     ('23', '未觉醒', '联动', 'NieRAutomata', 'Y'),  # 联动分组 → 不参与统计
     ('24', 'null', '改造', '皇家海军', 'Y'),        # 改造分组 → 不参与统计
@@ -197,7 +197,7 @@ class TestRemainingLevelingStatistics(unittest.TestCase):
 
         self.assertEqual(self._repository.getRemainingLevelingCount(), participating_total)
         self.assertGreater(self._participatingCount('认知觉醒五阶'), 0)
-        self.assertGreater(self._participatingCount('认知觉醒Ⅱ'), 0)
+        self.assertGreater(self._participatingCount('认知觉醒II'), 0)
 
     def testRepositoryExtraExclusions(self):
         """可选参数可追加排除档位，且默认调用不受影响。"""

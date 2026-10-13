@@ -323,7 +323,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         获取剩余练级数量（默认口径：排除已满120级的档位）。
 
         查询条件：
-        - ship_level NOT IN LEVELS_FULL_TECH（认知觉醒五阶 / 认知觉醒Ⅱ）
+        - ship_level NOT IN LEVELS_FULL_TECH（认知觉醒五阶 / 认知觉醒II）
         - ship_group IN ('常规', 'META', '方案')
         - ship_camp != 'UNIV'
         - 可选：额外排除的等级档位
@@ -358,23 +358,34 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         """
         计算所有已解锁舰娘从当前状态提升至指定阶段所需的心智材料总量。
 
+        材料基准数据取自 ``awakening_of_mind`` 表（按「稀有度 × 心智觉醒阶段」给定消耗），
+        本方法只负责选出**需要补的（稀有度, 阶段）组合**并求和。
+
+        口径（已与维护者确认）：
+
+        - 等级代表**已完成的阶段**：``认知觉醒一阶`` 表示阶段 1 已完成，只计阶段 2 及以后；
+          未觉醒与改造占位值 ``'null'`` 均视为阶段 0，从阶段 1 开始计。
+        - 材料只消耗到**认知觉醒四阶**为止；四阶升五阶（120 级）不需要材料（五阶是自定义档位），
+          因此 ``认知觉醒四阶`` 与 ``认知觉醒五阶`` 都按阶段 4 处理。
+        - ``认知觉醒II`` 按阶段 5 处理（完全满级，无需再消耗）。
+        - 稀有度直接对齐基准表：META 舰使用标准稀有度，方案舰使用 ``PRY`` / ``DR``，
+          基准表中 ``PRY`` 与 ``SSR``、``DR`` 与 ``UR`` 的消耗相同，故按 ``ship_rarity`` 连接即可。
+        - 统计范围：仅 ``codex_unlock = 'Y'`` 的舰娘，且排除 ``μ兵装 / 小船 / 改造 / 联动`` 分组
+          与 ``UNIV`` 阵营（三艘布里）。
+
         物资格式：
         - expend_gc: 物资
         - expend_limit: 心智单元
         - expend_limit2: 心智单元Ⅱ
 
         Args:
-            target_phase: 目标阶段（4=认知觉醒五阶, 5=认知觉醒Ⅱ）。
+            target_phase: 目标阶段（4=至认知觉醒五阶, 5=至认知觉醒II）。
 
         Returns:
             包含expend_gc、expend_limit、expend_limit2的字典。
         """
-        if target_phase == 4:
-            level_exclusion = "AND cg.ship_level NOT IN ('认知觉醒四阶', '认知觉醒五阶', '认知觉醒II')"
-        else:
-            level_exclusion = "AND cg.ship_level NOT IN ('认知觉醒II')"
-
-        sql = f"""
+        # 阶段映射已完整覆盖各档位，无需再写等级排除条件
+        sql = """
             SELECT
                 COALESCE(SUM(am.expend_gc), 0) AS expend_gc,
                 COALESCE(SUM(am.expend_limit), 0) AS expend_limit,
@@ -384,7 +395,6 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
             WHERE cg.codex_unlock = 'Y'
               AND cg.ship_group NOT IN ('μ兵装', '小船', '改造', '联动')
               AND cg.ship_camp != 'UNIV'
-              {level_exclusion}
               AND am.am_phase >
                   CASE cg.ship_level
                       WHEN '认知觉醒一阶' THEN 1
@@ -392,7 +402,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
                       WHEN '认知觉醒三阶' THEN 3
                       WHEN '认知觉醒四阶' THEN 4
                       WHEN '认知觉醒五阶' THEN 4
-                      WHEN '认知觉醒Ⅱ' THEN 5
+                      WHEN '认知觉醒II' THEN 5
                       ELSE 0
                   END
               AND am.am_phase <= ?
@@ -415,7 +425,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         """
         查询可进行认知觉醒的舰娘列表。
 
-        条件：ship_level != '认知觉醒Ⅱ' 且 codex_unlock = 'Y'
+        条件：ship_level != '认知觉醒II' 且 codex_unlock = 'Y'
         排序：按ship_aid降序、codex_id降序排列。
 
         Returns:
@@ -426,7 +436,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
                    ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
                    oath_status, codex_unlock, date_edit
             FROM {self.TABLE_NAME}
-            WHERE codex_unlock = 'Y' AND ship_level != '认知觉醒Ⅱ' AND ship_group != '改造'
+            WHERE codex_unlock = 'Y' AND ship_level != '认知觉醒II' AND ship_group != '改造'
             ORDER BY ship_aid DESC, codex_id DESC
         """
         try:

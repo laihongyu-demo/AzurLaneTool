@@ -23,7 +23,7 @@ AWAKEN_LEVELS = [
     "认知觉醒三阶",
     "认知觉醒四阶",
     "认知觉醒五阶",
-    "认知觉醒Ⅱ",
+    "认知觉醒II",
 ]
 
 
@@ -183,7 +183,7 @@ class AwakenService:
                 message=f"舰娘 '{ship.ship_name}' 尚未解锁"
             )
 
-        if ship.ship_level == "认知觉醒Ⅱ":
+        if ship.ship_level == "认知觉醒II":
             return AwakenResult(
                 success=False,
                 ship_name=ship.ship_name,

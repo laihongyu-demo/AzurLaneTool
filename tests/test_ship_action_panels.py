@@ -4,7 +4,7 @@
 覆盖：
 - 认知觉醒：选中舰娘后默认选中第一个可觉醒阶段，按钮可用
 - 认知觉醒：觉醒成功后保留选中的舰娘，并默认选中下一阶段（便于连续觉醒）
-- 认知觉醒：升到认知觉醒Ⅱ后该舰娘离开列表，选择自然清空
+- 认知觉醒：升到认知觉醒II后该舰娘离开列表，选择自然清空
 - 界限突破：单次突破成功后保留选中的舰娘与最新星级（便于连续升星）
 - 界限突破：升到满星后该舰娘离开列表，选择自然清空
 """
@@ -77,7 +77,7 @@ FIXTURE = [
     ('9002', '测试五阶', '认知觉醒五阶', 6, 'SSR', '常规', '2026/01/04', 'Y'),
     ('9003', '测试满星', '认知觉醒五阶', 6, 'SSR', '常规', '2026/01/03', 'Y'),
     ('9004', '测试四星', '认知觉醒五阶', 4, 'SSR', '常规', '2026/01/02', 'Y'),
-    ('9005', '测试已满级', '认知觉醒Ⅱ', 6, 'SSR', '常规', '2026/01/01', 'Y'),
+    ('9005', '测试已满级', '认知觉醒II', 6, 'SSR', '常规', '2026/01/01', 'Y'),
     ('9006', '测试未解锁', '未觉醒', 3, 'SSR', '常规', '2025/12/31', 'N'),
     ('9007', '测试改造', 'null', 0, 'SSR', '改造', '2025/12/30', 'Y'),
 ]
@@ -176,7 +176,7 @@ class TestAwakenPanel(ShipActionPanelTestCase):
         self._select('9002')
 
         self.assertEqual(self._panel._levelComboBox.currentIndex(), 0)
-        self.assertEqual(self._panel._levelComboBox.currentText(), '认知觉醒Ⅱ')
+        self.assertEqual(self._panel._levelComboBox.currentText(), '认知觉醒II')
 
     def testKeepsSelectionAfterAwaken(self):
         """觉醒成功后保留选中的舰娘，并默认选中下一阶段。"""
@@ -198,15 +198,15 @@ class TestAwakenPanel(ShipActionPanelTestCase):
         self.assertTrue(self._panel._awakenBtn.isEnabled())
 
     def testSelectionClearedAfterReachingMaxLevel(self):
-        """升到认知觉醒Ⅱ后该舰娘离开列表，选择与按钮复位。"""
+        """升到认知觉醒II后该舰娘离开列表，选择与按钮复位。"""
         self._select('9002')
-        self.assertEqual(self._panel._levelComboBox.currentText(), '认知觉醒Ⅱ')
+        self.assertEqual(self._panel._levelComboBox.currentText(), '认知觉醒II')
 
         with patch.object(QMessageBox, 'question', return_value=QMessageBox.Yes):
             self._panel._onAwakenClicked()
 
         row = self._shipRow('9002')
-        self.assertEqual(row['ship_level'], '认知觉醒Ⅱ')
+        self.assertEqual(row['ship_level'], '认知觉醒II')
 
         self.assertEqual(self._indexOf(self._panel._shipComboBox, '9002'), -1)
         self.assertEqual(self._panel._shipComboBox.currentIndex(), -1)

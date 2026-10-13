@@ -40,7 +40,7 @@ class MentalCalculationResult:
         if not self.success:
             return self.message
 
-        phase_name = "认知觉醒五阶" if self.target_phase == TARGET_PHASE_FIVE else "认知觉醒Ⅱ"
+        phase_name = "认知觉醒五阶" if self.target_phase == TARGET_PHASE_FIVE else "认知觉醒II"
         return (
             f"心智计算完成 | 目标: {phase_name} | "
             f"物资: {self.expend_gc} | "
