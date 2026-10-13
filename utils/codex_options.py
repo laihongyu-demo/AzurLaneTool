@@ -120,6 +120,60 @@ DATE_EDIT_TIME_FORMAT: str = "HH:mm:ss"
 # 科技属性文本录入的格式说明（界面提示与错误信息共用）
 BUFF_TEXT_EXAMPLE: str = "战巡/战列/航战 耐久+1"
 
+# 等级 → 已完成的觉醒阶段号（唯一口径来源，心智计算与觉醒消耗共用）
+#   一阶/二阶/三阶/四阶 = 对应阶段已完成；四阶升五阶不需要材料，故五阶与四阶同为 4；
+#   认知觉醒II = 完全满级（阶段 5）；未觉醒与改造占位值 'null' 为 0
+LEVEL_PHASE_MAP: Dict[str, int] = {
+    "认知觉醒一阶": 1,
+    "认知觉醒二阶": 2,
+    "认知觉醒三阶": 3,
+    "认知觉醒四阶": 4,
+    "认知觉醒五阶": 4,
+    "认知觉醒II": 5,
+}
+
+# 未登记的等级（含未觉醒、'null'）按阶段 0 处理
+DEFAULT_PHASE: int = 0
+
+
+def getPhaseOfLevel(ship_level) -> int:
+    """
+    获取某等级对应的“已完成觉醒阶段号”。
+
+    Args:
+        ship_level: 舰娘等级字符串（未觉醒 / 认知觉醒一阶 … / 认知觉醒II / 'null'）。
+
+    Returns:
+        阶段号（0–5）；未登记的取值返回 :data:`DEFAULT_PHASE`。
+
+    Examples:
+        >>> getPhaseOfLevel("认知觉醒一阶")
+        1
+        >>> getPhaseOfLevel("认知觉醒五阶")
+        4
+        >>> getPhaseOfLevel("未觉醒")
+        0
+    """
+    return LEVEL_PHASE_MAP.get(str(ship_level or "").strip(), DEFAULT_PHASE)
+
+
+def buildPhaseCaseSql(column: str) -> str:
+    """
+    生成与 :data:`LEVEL_PHASE_MAP` 一致的 SQL CASE 片段。
+
+    供聚合查询（心智计算）复用同一份阶段口径，避免出现第二套映射。
+
+    Args:
+        column: 等级字段表达式（如 ``cg.ship_level`` 或占位符 ``?``）。
+
+    Returns:
+        形如 ``CASE cg.ship_level WHEN '认知觉醒一阶' THEN 1 … ELSE 0 END`` 的 SQL 片段。
+    """
+    whens = " ".join(
+        f"WHEN '{level}' THEN {phase}" for level, phase in LEVEL_PHASE_MAP.items()
+    )
+    return f"CASE {column} {whens} ELSE {DEFAULT_PHASE} END"
+
 
 def getGroupIdPrefix(ship_group: str) -> Optional[str]:
     """

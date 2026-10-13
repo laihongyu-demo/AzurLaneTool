@@ -9,6 +9,7 @@ from typing import Dict, Optional
 
 from repositories.codex_repository import CodexGroupRepository
 from utils.exceptions import DatabaseError
+from utils.unit_formatter import formatExact
 
 
 TARGET_PHASE_FIVE = 4
@@ -36,16 +37,16 @@ class MentalCalculationResult:
     message: str = ""
 
     def toStatusBarMessage(self) -> str:
-        """生成statusBar显示消息。"""
+        """生成statusBar显示消息（材料数量不换算，带千分符）。"""
         if not self.success:
             return self.message
 
         phase_name = "认知觉醒五阶" if self.target_phase == TARGET_PHASE_FIVE else "认知觉醒II"
         return (
             f"心智计算完成 | 目标: {phase_name} | "
-            f"物资: {self.expend_gc} | "
-            f"心智单元: {self.expend_limit} | "
-            f"心智单元Ⅱ: {self.expend_limit2}"
+            f"物资: {formatExact(self.expend_gc)} | "
+            f"心智单元: {formatExact(self.expend_limit)} | "
+            f"心智单元Ⅱ: {formatExact(self.expend_limit2)}"
         )
 
 

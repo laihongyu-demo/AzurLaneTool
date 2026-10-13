@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Sequence
 
 from models.codex_model import CodexGroupModel, CodexTpModel, CodexBuffModel
 from repositories.base_repository import BaseRepository
+from utils import codex_options as options
 from utils.codex_options import ID_PREFIX_PAD_WIDTH, LEVELS_FULL_TECH, getGroupIdPrefix
 from utils.exceptions import DatabaseError
 from utils.sql_loader import loadSqlFile
@@ -385,7 +386,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
             包含expend_gc、expend_limit、expend_limit2的字典。
         """
         # 阶段映射已完整覆盖各档位，无需再写等级排除条件
-        sql = """
+        sql = f"""
             SELECT
                 COALESCE(SUM(am.expend_gc), 0) AS expend_gc,
                 COALESCE(SUM(am.expend_limit), 0) AS expend_limit,
@@ -395,16 +396,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
             WHERE cg.codex_unlock = 'Y'
               AND cg.ship_group NOT IN ('μ兵装', '小船', '改造', '联动')
               AND cg.ship_camp != 'UNIV'
-              AND am.am_phase >
-                  CASE cg.ship_level
-                      WHEN '认知觉醒一阶' THEN 1
-                      WHEN '认知觉醒二阶' THEN 2
-                      WHEN '认知觉醒三阶' THEN 3
-                      WHEN '认知觉醒四阶' THEN 4
-                      WHEN '认知觉醒五阶' THEN 4
-                      WHEN '认知觉醒II' THEN 5
-                      ELSE 0
-                  END
+              AND am.am_phase > {options.buildPhaseCaseSql('cg.ship_level')}
               AND am.am_phase <= ?
         """
         try:
@@ -420,6 +412,53 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
                 return {"expend_gc": 0, "expend_limit": 0, "expend_limit2": 0}
         except sqlite3.Error as e:
             raise DatabaseError(f"计算心智材料失败: {e}")
+
+    def calculateAwakenConsume(self, codex_id, from_level: str, to_level: str) -> Dict[str, int]:
+        """
+        计算某舰娘从 from_level 觉醒到 to_level 所消耗的材料。
+
+        阶段口径与 :meth:`calculateMentalMaterials` 共用
+        :func:`utils.codex_options.getPhaseOfLevel`：只累计
+        「已完成阶段 +1」到「目标阶段」之间的基准表消耗。
+
+        Args:
+            codex_id: 图鉴ID。
+            from_level: 觉醒前等级。
+            to_level: 觉醒后等级。
+
+        Returns:
+            包含expend_gc、expend_limit、expend_limit2的字典。
+        """
+        from_phase = options.getPhaseOfLevel(from_level)
+        to_phase = options.getPhaseOfLevel(to_level)
+
+        if to_phase <= from_phase:
+            return {"expend_gc": 0, "expend_limit": 0, "expend_limit2": 0}
+
+        sql = """
+            SELECT
+                COALESCE(SUM(am.expend_gc), 0) AS expend_gc,
+                COALESCE(SUM(am.expend_limit), 0) AS expend_limit,
+                COALESCE(SUM(am.expend_limit2), 0) AS expend_limit2
+            FROM codex_group cg
+            JOIN awakening_of_mind am ON am.ship_rarity = cg.ship_rarity
+            WHERE cg.codex_id = ?
+              AND am.am_phase > ?
+              AND am.am_phase <= ?
+        """
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql, (str(codex_id), from_phase, to_phase))
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        "expend_gc": row["expend_gc"],
+                        "expend_limit": row["expend_limit"],
+                        "expend_limit2": row["expend_limit2"]
+                    }
+                return {"expend_gc": 0, "expend_limit": 0, "expend_limit2": 0}
+        except sqlite3.Error as e:
+            raise DatabaseError(f"计算觉醒消耗失败: {e}")
 
     def findAwakenable(self) -> List[CodexGroupModel]:
         """

@@ -11,7 +11,7 @@ from utils.helpers import (
     safeGet, truncateString, formatNumber, formatCurrency
 )
 from utils.sql_loader import loadSqlFile
-from utils.unit_formatter import formatValue
+from utils.unit_formatter import formatExact, formatValue
 from utils.exceptions import DatabaseError
 
 
@@ -131,6 +131,33 @@ class TestUnitFormatter(unittest.TestCase):
         self.assertEqual(formatValue(1000000), "1.0M")
         self.assertEqual(formatValue(999999999), "1000.0M")
         self.assertEqual(formatValue(1000000000), "1.0B")
+
+
+class TestFormatExact(unittest.TestCase):
+    """精确格式化（不换算、加千分符）测试类。"""
+
+    def testSmallValuesHaveNoSeparator(self):
+        """小于 1000 的数值不加分隔符。"""
+        self.assertEqual(formatExact(0), "0")
+        self.assertEqual(formatExact(1), "1")
+        self.assertEqual(formatExact(999), "999")
+
+    def testThousandsSeparator(self):
+        """千位以上按三位加分隔符，且不做单位换算。"""
+        self.assertEqual(formatExact(1000), "1,000")
+        self.assertEqual(formatExact(12345), "12,345")
+        self.assertEqual(formatExact(559320), "559,320")
+        self.assertEqual(formatExact(5593200), "5,593,200")
+
+    def testNegativeAndNone(self):
+        """负数保留负号；None 视为 0。"""
+        self.assertEqual(formatExact(-1500), "-1,500")
+        self.assertEqual(formatExact(None), "0")
+
+    def testFloatInputs(self):
+        """整数浮点按整数输出，非整数保留小数。"""
+        self.assertEqual(formatExact(2000.0), "2,000")
+        self.assertEqual(formatExact(1234.5), "1,234.5")
 
 
 if __name__ == "__main__":

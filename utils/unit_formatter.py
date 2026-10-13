@@ -1,7 +1,8 @@
 """
 数值单位换算与格式化模块。
 
-提供大数值的自动单位转换功能，支持 K/M/B/T 单位输出。
+提供大数值的自动单位转换功能，支持 K/M/B/T 单位输出；
+另提供不做换算、仅加千分符的精确格式化（用于需要看清精确数值的场合）。
 """
 
 from typing import Union
@@ -58,6 +59,38 @@ def formatValue(value: Union[int, float]) -> str:
     if value < 0:
         return f"-{_formatAbsValue(abs(value))}"
     return _formatAbsValue(value)
+
+
+def formatExact(value: Union[int, float, None]) -> str:
+    """
+    将数值格式化为带千分符的精确字符串（不做单位换算）。
+
+    与 :func:`formatValue` 的区别：本函数不换算为 K/M/B/T，保留完整数值，
+    便于核对“精确的材料变化”，例如 ``5593200`` → ``5,593,200``。
+
+    Args:
+        value: 需要格式化的数值；``None`` 视为 0。
+
+    Returns:
+        带千分符的字符串，如 ``"12,345"``、``"0"``、``"-1,500"``。
+
+    Examples:
+        >>> formatExact(0)
+        '0'
+        >>> formatExact(999)
+        '999'
+        >>> formatExact(5593200)
+        '5,593,200'
+        >>> formatExact(-1500)
+        '-1,500'
+    """
+    if value is None:
+        return "0"
+
+    if isinstance(value, float) and not value.is_integer():
+        return f"{value:,}"
+
+    return f"{int(value):,}"
 
 
 def _formatAbsValue(value: Union[int, float]) -> str:
