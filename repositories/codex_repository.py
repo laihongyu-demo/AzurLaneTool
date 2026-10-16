@@ -12,7 +12,7 @@ from repositories.base_repository import BaseRepository
 from utils import codex_options as options
 from utils.codex_options import ID_PREFIX_PAD_WIDTH, LEVELS_FULL_TECH, getGroupIdPrefix
 from utils.exceptions import DatabaseError
-from utils.sql_loader import loadSqlFile
+from utils.sql_loader import loadSqlFile, loadSqlTemplate
 
 
 class CodexGroupRepository(BaseRepository[CodexGroupModel]):
@@ -308,10 +308,21 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         """
         获取布里需求数量统计。
 
+        稀有度口径（满星阈值、布里种类）来自 utils/codex_options.py 的单一来源，
+        通过 SQL 模板注入，避免出现第二套映射。
+
         Returns:
             布里需求列表，每项包含material_type和total_neededMaterial。
         """
-        sql = loadSqlFile("GetTheBulinRequirements_ByBulinQuality.sql")
+        sql = loadSqlTemplate(
+            "GetTheBulinRequirements_ByBulinQuality.sql",
+            max_star_case=options.buildMappingCaseSql(
+                "ship_rarity", options.RARITY_MAX_STAR, options.DEFAULT_MAX_STAR
+            ),
+            material_type_case=options.buildMappingCaseSql(
+                "ship_rarity", options.RARITY_BULIN_TYPE, None, quoteValue=True
+            ),
+        )
         try:
             with self._getConnection() as conn:
                 cursor = conn.execute(sql)
@@ -521,13 +532,8 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
                    ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
                    oath_status, codex_unlock, date_edit
             FROM {self.TABLE_NAME}
-            WHERE ship_star < CASE
-                WHEN ship_rarity IN ('UR', 'DR', 'SSR', 'PRY') THEN 6
-                WHEN ship_rarity IN ('SR', 'R') THEN 5
-                WHEN ship_rarity = 'N' THEN 4
-                WHEN ship_rarity IN ('PR', 'E') THEN 3
-                ELSE 6
-            END
+            WHERE ship_star < {options.buildMappingCaseSql(
+                'ship_rarity', options.RARITY_MAX_STAR, options.DEFAULT_MAX_STAR)}
             AND ship_group != '改造'
             AND codex_unlock = 'Y'
             ORDER BY ship_aid DESC, codex_id DESC

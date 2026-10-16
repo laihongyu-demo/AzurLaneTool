@@ -175,6 +175,83 @@ def buildPhaseCaseSql(column: str) -> str:
     return f"CASE {column} {whens} ELSE {DEFAULT_PHASE} END"
 
 
+# 稀有度 → 满星阈值
+# 各稀有度均可升星 3 次（初始星不同）：N 1→4、R/SR 2→5、SSR/UR 3→6；
+# 方案舰固定使用 PRY / DR（PRY 同 SSR、DR 同 UR），另有历史值 PR / E
+RARITY_MAX_STAR: Dict[str, int] = {
+    "N": 4,
+    "R": 5,
+    "SR": 5,
+    "SSR": 6,
+    "UR": 6,
+    "PRY": 6,
+    "DR": 6,
+    "PR": 3,
+    "E": 3,
+}
+
+# 未登记稀有度的兜底满星阈值
+DEFAULT_MAX_STAR: int = 6
+
+# 稀有度 → 升星所需布里种类（方案舰的 PRY / DR 不在此表，即不消耗布里）
+RARITY_BULIN_TYPE: Dict[str, str] = {
+    "N": "Universal Bulin",
+    "R": "Universal Bulin",
+    "SR": "Universal Bulin",
+    "SSR": "Trial Bulin MKII",
+    "UR": "Specialized Bulin MKIII",
+}
+
+# 单次升星的基础消耗与最后一次升星的额外消耗（合计 1 + 1 + 2 = 4）
+BULIN_PER_STAR: int = 1
+BULIN_LAST_STAR_EXTRA: int = 1
+
+
+def getMaxStar(ship_rarity) -> int:
+    """
+    获取某稀有度的满星阈值。
+
+    Args:
+        ship_rarity: 稀有度（N / R / SR / SSR / UR / PRY / DR / PR / E）。
+
+    Returns:
+        满星阈值；未登记时返回 :data:`DEFAULT_MAX_STAR`。
+
+    Examples:
+        >>> getMaxStar("N")
+        4
+        >>> getMaxStar("SSR")
+        6
+    """
+    return RARITY_MAX_STAR.get(str(ship_rarity or "").strip(), DEFAULT_MAX_STAR)
+
+
+def buildMappingCaseSql(column: str, mapping: Dict, default, quoteValue: bool = False) -> str:
+    """
+    按映射字典生成 SQL CASE 片段（把口径下沉为单一来源，供 SQL 模板注入）。
+
+    Args:
+        column: 字段表达式（如 ``ship_rarity``）。
+        mapping: 取值映射，如 ``{"N": 4, "SSR": 6}``。
+        default: 未命中时的返回值（``None`` 生成 ``ELSE NULL``）。
+        quoteValue: 映射值是否按字符串加引号（文字类型映射时为 True）。
+
+    Returns:
+        形如 ``CASE ship_rarity WHEN 'N' THEN 4 … ELSE 6 END`` 的 SQL 片段。
+    """
+    def render(value) -> str:
+        if value is None:
+            return "NULL"
+        if quoteValue:
+            return f"'{value}'"
+        return str(value)
+
+    whens = " ".join(
+        f"WHEN '{key}' THEN {render(value)}" for key, value in mapping.items()
+    )
+    return f"CASE {column} {whens} ELSE {render(default)} END"
+
+
 def getGroupIdPrefix(ship_group: str) -> Optional[str]:
     """
     获取指定分组的图鉴ID前缀。

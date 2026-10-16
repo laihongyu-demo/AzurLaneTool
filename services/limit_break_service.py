@@ -10,17 +10,13 @@ from typing import List, Optional, Dict
 
 from models.codex_model import CodexGroupModel
 from repositories.codex_repository import CodexGroupRepository, CodexTpRepository
+from utils import codex_options as options
 from utils.db_connection import DatabaseContext
 from utils.exceptions import DatabaseError, ValidationError
 
 
-MAX_STAR_MAP = {
-    'UR': 6, 'DR': 6, 'SSR': 6, 'PRY': 6,
-    'SR': 5, 'R': 5,
-    'N': 6
-}
-
-MAX_STAR_DEFAULT = 6
+# 满星阈值统一取自 utils/codex_options.RARITY_MAX_STAR（N=4 / R·SR=5 / SSR·UR=6），
+# 避免与 SQL 及其它查询出现第二套口径
 
 
 @dataclass
@@ -115,7 +111,7 @@ class LimitBreakService:
         Returns:
             满星数值。
         """
-        return MAX_STAR_MAP.get(ship_rarity, MAX_STAR_DEFAULT)
+        return options.getMaxStar(ship_rarity)
 
     def _updateFullStarConditions(self, conn: sqlite3.Connection, codex_id: str) -> None:
         """
