@@ -17,7 +17,7 @@ from services.user_service import UserService
 from services.mental_calculation_service import MentalCalculationService, MentalCalculationResult
 from views.widgets.stat_card import StatCard
 from utils.exceptions import DatabaseError
-from utils.unit_formatter import formatValue
+from utils.unit_formatter import formatExact
 
 
 class StatisticsPanel(QWidget):
@@ -67,11 +67,12 @@ class StatisticsPanel(QWidget):
         commander_stats_layout = QHBoxLayout()
         commander_stats_layout.setSpacing(0)
 
+        # 数值口径约定：精确数值固定加千分符；大概数值用 K/M/B/T 缩写（保留一位小数）。
         self._commanderLevelCard = StatCard("指挥官等级", "-", clickable=True) # 格式："指挥官等级（当前经验/需求经验）"
-        self._dutyDaysCard = StatCard("执勤天数", "-")
-        self._expEfficiencyCard = StatCard("指级效率", "-") # ≥10000采用千进制显示且保留一位小数（示例：10000->10.0k）
-        self._cubeCard = StatCard("魔方", "-", clickable=True) # ≥10000采用千进制显示且保留一位小数（示例：10000->10.0k）
-        self._redGemCard = StatCard("红尖尖", "-", clickable=True) # ≥10000采用千进制显示且保留一位小数（示例：10000->10.0k）
+        self._dutyDaysCard = StatCard("执勤天数", "-") # 精确数值：固定千分符（示例：1169->1,169天）
+        self._expEfficiencyCard = StatCard("指级效率", "-") # 精确数值：固定千分符（示例：10000->10,000）
+        self._cubeCard = StatCard("魔方", "-", clickable=True) # 大概数值：≥10000用K/M/B/T缩写且保留一位小数（示例：10000->10.0K）
+        self._redGemCard = StatCard("红尖尖", "-", clickable=True) # 大概数值：≥10000用K/M/B/T缩写且保留一位小数（示例：10000->10.0K）
 
         commander_stats_layout.addStretch()
         commander_stats_layout.addWidget(self._commanderLevelCard)
@@ -115,8 +116,8 @@ class StatisticsPanel(QWidget):
         tp_stats_layout = QHBoxLayout()
         tp_stats_layout.setSpacing(15)
 
-        self._totalTpCard = StatCard("科技点总值", "0")
-        self._unlockedTpCard = StatCard("当前科技点", "0")
+        self._totalTpCard = StatCard("科技点总值", "0")  # 精确数值：固定千分符
+        self._unlockedTpCard = StatCard("当前科技点", "0")  # 精确数值：固定千分符
         self._tpRateCard = StatCard("科技点完成率", "0%")
         self._remainingLevelingCard = StatCard("剩余练级数量", "0")  # 格式："需消耗心智单元（还需练级）"
         self._remainingLevelingCard.setToolTip(
@@ -143,9 +144,9 @@ class StatisticsPanel(QWidget):
         self._universalBulinCard = StatCard("泛用型布里", "0")
         self._trialBulinCard = StatCard("试作型布里MKII", "0")
         self._specializedBulinCard = StatCard("特装型布里MKIII", "0")
-        self._mentalUnitCard = StatCard("心智单元", "-")
-        self._mentalUnitIICard = StatCard("心智单元Ⅱ", "-")
-        self._coinCard = StatCard("物资", "-")
+        self._mentalUnitCard = StatCard("心智单元", "-")  # 精确数值：固定千分符
+        self._mentalUnitIICard = StatCard("心智单元Ⅱ", "-")  # 精确数值：固定千分符
+        self._coinCard = StatCard("物资", "-")  # 精确数值：固定千分符
 
         requirement_stats_layout.addWidget(self._universalBulinCard)
         requirement_stats_layout.addWidget(self._trialBulinCard)
@@ -255,12 +256,15 @@ class StatisticsPanel(QWidget):
         """
         根据计算结果更新心智相关标签卡。
 
+        材料数量属于精确数值，统一固定加千分符（与状态栏消息口径一致），
+        不做 K/M/B/T 缩写换算。
+
         Args:
             result: 心智计算结果对象。
         """
-        self._mentalUnitCard.setValue(formatValue(result.expend_limit))
-        self._mentalUnitIICard.setValue(formatValue(result.expend_limit2))
-        self._coinCard.setValue(formatValue(result.expend_gc))
+        self._mentalUnitCard.setValue(formatExact(result.expend_limit))
+        self._mentalUnitIICard.setValue(formatExact(result.expend_limit2))
+        self._coinCard.setValue(formatExact(result.expend_gc))
 
     def refreshData(self) -> None:
         """刷新统计数据。"""
@@ -290,8 +294,8 @@ class StatisticsPanel(QWidget):
             unlocked_tp = tp_stats.get("unlocked_tp", 0)
             completion_rate = tp_stats.get("completion_rate", 0)
 
-            self._totalTpCard.setValue(str(total_tp))
-            self._unlockedTpCard.setValue(str(unlocked_tp))
+            self._totalTpCard.setValue(formatExact(total_tp))
+            self._unlockedTpCard.setValue(formatExact(unlocked_tp))
             self._tpRateCard.setValue(f"{completion_rate:.1f}%")
 
             bulin_stats = stats.get("bulin", {})
@@ -354,8 +358,8 @@ class StatisticsPanel(QWidget):
         unlocked_tp = tp_stats.get("unlocked_tp", 0)
         completion_rate = tp_stats.get("completion_rate", 0)
 
-        self._totalTpCard.setValue(str(total_tp))
-        self._unlockedTpCard.setValue(str(unlocked_tp))
+        self._totalTpCard.setValue(formatExact(total_tp))
+        self._unlockedTpCard.setValue(formatExact(unlocked_tp))
         self._tpRateCard.setValue(f"{completion_rate:.1f}%")
 
     def updateBulinStats(self, bulin_stats: Dict[str, Any]) -> None:

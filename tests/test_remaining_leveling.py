@@ -7,6 +7,7 @@
 - 等级口径：五阶/Ⅱ 两口径都排除；一阶只排除练级口径；四阶只排除材料口径
 - 边界条件：联动/改造分组、UNIV 阵营、字符串 null 等级、未解锁舰娘
 - 视图层：统计卡片按“主值（括弧）”格式展示并带提示
+- 视图层：科技点总值/当前科技点带千分符，千位以下不加分隔符
 """
 
 import os
@@ -18,6 +19,7 @@ import unittest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from repositories.codex_repository import CodexGroupRepository  # noqa: E402
+from services.mental_calculation_service import MentalCalculationResult  # noqa: E402
 from services.statistics_service import StatisticsService  # noqa: E402
 from utils.codex_options import LEVELS_EXP_SUFFICIENT, LEVELS_NO_MATERIAL  # noqa: E402
 from utils.constants import DEFAULT_DB_PATH  # noqa: E402
@@ -357,6 +359,102 @@ class TestRemainingLevelingCard(unittest.TestCase):
         self.assertEqual(self._panel._unlockedTpCard.value(), '40')
         self.assertEqual(self._panel._tpRateCard.value(), '40.0%')
         self.assertEqual(self._panel._totalCard.value(), '4（5）')
+
+
+class _StubLargeTpStatisticsService(_StubStatisticsService):
+    """统计服务桩：科技点为四位及以上，用于校验千分符。"""
+
+    def getAllStatistics(self):
+        """返回科技点超过千位的预设统计数据。"""
+        stats = super().getAllStatistics()
+        stats['tp'] = {
+            'total_tp': 49203, 'unlocked_tp': 39030, 'completion_rate': 79.3
+        }
+        return stats
+
+
+class TestTpCardThousandSeparator(unittest.TestCase):
+    """科技点卡片千分符展示测试类。"""
+
+    @classmethod
+    def setUpClass(cls):
+        """初始化 Qt 应用。"""
+        from PyQt5.QtWidgets import QApplication
+        cls._app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        """测试初始化。"""
+        from views.widgets.statistics_panel import StatisticsPanel
+
+        self._panel = StatisticsPanel(
+            statistics_service=_StubLargeTpStatisticsService(),
+            user_service=_StubUserService()
+        )
+
+    def tearDown(self):
+        """测试清理。"""
+        self._panel.deleteLater()
+
+    def testTpCardsUseThousandSeparator(self):
+        """科技点总值与当前科技点带千分符，完成率不受影响。"""
+        self.assertEqual(self._panel._totalTpCard.value(), '49,203')
+        self.assertEqual(self._panel._unlockedTpCard.value(), '39,030')
+        self.assertEqual(self._panel._tpRateCard.value(), '79.3%')
+
+    def testUpdateTpStatsAlsoUsesThousandSeparator(self):
+        """局部刷新入口与整体刷新保持同一格式。"""
+        self._panel.updateTpStats({
+            'total_tp': 4, 'unlocked_tp': 5, 'completion_rate': 50.0
+        })
+
+        self.assertEqual(self._panel._totalTpCard.value(), '4')
+        self.assertEqual(self._panel._unlockedTpCard.value(), '5')
+
+
+class _StubMentalCalculationService:
+    """心智计算服务桩：返回固定的三项材料总量。"""
+
+    def calculate(self, include_phase_ii=False):
+        """返回预设的心智计算结果。"""
+        return MentalCalculationResult(
+            expend_gc=7115400,
+            expend_limit=711540,
+            expend_limit2=77390,
+            target_phase=5,
+            success=True
+        )
+
+
+class TestExactMaterialCards(unittest.TestCase):
+    """材料精确数值卡片千分符展示测试类。"""
+
+    @classmethod
+    def setUpClass(cls):
+        """初始化 Qt 应用。"""
+        from PyQt5.QtWidgets import QApplication
+        cls._app = QApplication.instance() or QApplication([])
+
+    def setUp(self):
+        """测试初始化。"""
+        from views.widgets.statistics_panel import StatisticsPanel
+
+        self._panel = StatisticsPanel(
+            statistics_service=_StubStatisticsService(),
+            user_service=_StubUserService(),
+            mental_calculation_service=_StubMentalCalculationService()
+        )
+
+    def tearDown(self):
+        """测试清理。"""
+        self._panel.deleteLater()
+
+    def testMaterialCardsUseThousandSeparator(self):
+        """心智计算材料精确到个位，固定加千分符，不做 K/M 缩写。"""
+        self._panel._onMentalCalcClicked()
+
+        self.assertEqual(self._panel._coinCard.value(), '7,115,400')
+        self.assertEqual(self._panel._mentalUnitCard.value(), '711,540')
+        self.assertEqual(self._panel._mentalUnitIICard.value(), '77,390')
 
 
 if __name__ == "__main__":
