@@ -180,6 +180,7 @@ class MainWindow(QMainWindow):
         self._shipManagementPanel.oathResult.connect(self._onOathResult)
         self._resourceManagementPanel.dataRefreshed.connect(self._onResourceDataRefreshed)
         self._resourceManagementPanel.taskResult.connect(self._onCubeTaskResult)
+        self._resourceManagementPanel.entryResult.connect(self._onResourceEntryResult)
 
     def _onRefreshClicked(self) -> None:
         """刷新按钮点击事件处理。"""
@@ -262,6 +263,15 @@ class MainWindow(QMainWindow):
 
         Args:
             result: 写操作结果对象。
+        """
+        self._statusBar.showMessage(result.toStatusBarMessage())
+
+    def _onResourceEntryResult(self, result) -> None:
+        """
+        常规录入结果事件处理。
+
+        Args:
+            result: `ResourceEntryResult` 实例。
         """
         self._statusBar.showMessage(result.toStatusBarMessage())
 
