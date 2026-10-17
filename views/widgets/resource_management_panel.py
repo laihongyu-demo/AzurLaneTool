@@ -1,8 +1,12 @@
 """
 资源统计面板模块。
 
-「资源统计」页签承载「魔方任务看板」，并为后续常规录入（活动建造、礼包等）预留位置；
-指级经验已迁移到「指挥官等级」卡片的独立窗口（见 ``views/dialogs/commander_exp_dialog.py``）。
+页签级结构：
+- 「魔方任务看板」：内含任务 / 每月签到 / 世界巡游 / 常规录入四个同级分组；
+- 「红尖尖任务看板」：与魔方任务看板同级，暂为占位（红尖尖目前没有固定奖励任务）；
+- 指级经验已迁移到「指挥官等级」卡片的独立窗口。
+
+整页放在滚动区里，内容变高时滚动浏览。
 """
 
 from typing import Optional
@@ -20,8 +24,7 @@ class ResourceManagementPanel(QWidget):
     """
     资源统计面板控件。
 
-    内容整体可垂直滚动：看板之外还给后续常规录入表单留了空间，内容变高时滚动浏览，
-    而不是把控件压扁。
+    与「舰娘管理」页签同一组织方式：一个页签承载多个页签级看板；整体可垂直滚动。
     """
 
     dataRefreshed = pyqtSignal()
@@ -57,7 +60,7 @@ class ResourceManagementPanel(QWidget):
 
         self._taskBoardPanel = CubeTaskBoardPanel(self._cube_task_service)
         layout.addWidget(self._taskBoardPanel)
-        layout.addWidget(self._buildReservedGroup())
+        layout.addWidget(self._buildRedGemBoard())
         layout.addStretch()
 
         scroll = QScrollArea()
@@ -69,20 +72,20 @@ class ResourceManagementPanel(QWidget):
 
         outer.addWidget(scroll)
 
-    def _buildReservedGroup(self) -> QGroupBox:
+    def _buildRedGemBoard(self) -> QGroupBox:
         """
-        构建后续常规录入的占位分组。
+        构建红尖尖任务看板（与魔方任务看板同级，暂为占位）。
 
         Returns:
             占位分组控件。
         """
-        group = QGroupBox("常规录入")
+        group = QGroupBox("红尖尖任务看板")
         layout = QVBoxLayout(group)
         layout.setContentsMargins(12, 16, 12, 12)
 
         hint = QLabel(
-            "活动建造、特型建造、礼包等非固定收支的手工录入表单将加入本区域"
-            "（规划见 issue #17）。固定奖励请使用上方的任务看板。",
+            "红尖尖目前没有固定数量的周期性来源，暂无任务卡片。"
+            "后续如出现同类固定奖励（或需要手工录入），将在此接入（见 issue #17）。",
             self,
         )
         hint.setWordWrap(True)
