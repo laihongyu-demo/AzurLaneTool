@@ -14,8 +14,11 @@ from PyQt5.QtCore import Qt, pyqtSignal
 
 from services.statistics_service import StatisticsService
 from services.user_service import UserService
+from services.commander_service import CommanderService
+from services.resource_service import ResourceService
 from services.mental_calculation_service import MentalCalculationService, MentalCalculationResult
 from views.widgets.stat_card import StatCard
+from utils.constants import RESOURCE_TYPE_CUBE, RESOURCE_TYPE_RED_GEM
 from utils.exceptions import DatabaseError
 from utils.unit_formatter import formatExact
 
@@ -34,6 +37,8 @@ class StatisticsPanel(QWidget):
         statistics_service: Optional[StatisticsService] = None,
         user_service: Optional[UserService] = None,
         mental_calculation_service: Optional[MentalCalculationService] = None,
+        commander_service: Optional[CommanderService] = None,
+        resource_service: Optional[ResourceService] = None,
         parent: QWidget = None
     ):
         """
@@ -43,12 +48,16 @@ class StatisticsPanel(QWidget):
             statistics_service: 统计服务实例。
             user_service: 用户服务实例。
             mental_calculation_service: 心智计算服务实例。
+            commander_service: 指挥官服务实例。
+            resource_service: 资源统计服务实例（只读）。
             parent: 父控件。
         """
         super().__init__(parent)
         self._statistics_service = statistics_service or StatisticsService()
         self._user_service = user_service or UserService()
         self._mental_calculation_service = mental_calculation_service or MentalCalculationService()
+        self._commander_service = commander_service or CommanderService()
+        self._resource_service = resource_service or ResourceService()
         self._initUi()
         self._connectSignals()
         self.refreshData()
@@ -73,6 +82,9 @@ class StatisticsPanel(QWidget):
         self._expEfficiencyCard = StatCard("指级效率", "-") # 精确数值：固定千分符（示例：10000->10,000）
         self._cubeCard = StatCard("魔方", "-", clickable=True) # 大概数值：≥10000用K/M/B/T缩写且保留一位小数（示例：10000->10.0K）
         self._redGemCard = StatCard("红尖尖", "-", clickable=True) # 大概数值：≥10000用K/M/B/T缩写且保留一位小数（示例：10000->10.0K）
+
+        # 指级效率口径待定（历史上依赖 Excel 公式），接线见 issue #16
+        self._expEfficiencyCard.setToolTip("指级效率口径待定（依赖 Excel 公式计算），见 issue #16")
 
         commander_stats_layout.addStretch()
         commander_stats_layout.addWidget(self._commanderLevelCard)
@@ -272,6 +284,9 @@ class StatisticsPanel(QWidget):
             duty_days_text = self._user_service.getDutyDaysText()
             self._dutyDaysCard.setValue(duty_days_text)
 
+            self.updateCommanderStats()
+            self.updateResourceStats()
+
             stats = self._statistics_service.getAllStatistics()
 
             unlock_stats = stats.get("unlock", {})
@@ -314,6 +329,10 @@ class StatisticsPanel(QWidget):
 
     def _showError(self, message: str) -> None:
         """显示错误信息。"""
+        self._commanderLevelCard.setValue("错误")
+        self._expEfficiencyCard.setValue("错误")
+        self._cubeCard.setValue("错误")
+        self._redGemCard.setValue("错误")
         self._totalCard.setValue("错误")
         self._unlockedCard.setValue("错误")
         self._lockedCard.setValue("错误")
@@ -329,6 +348,29 @@ class StatisticsPanel(QWidget):
         self._mentalUnitCard.setValue("错误")
         self._mentalUnitIICard.setValue("错误")
         self._coinCard.setValue("错误")
+
+    def updateCommanderStats(self) -> None:
+        """
+        更新指挥官等级卡片与悬停提示。
+
+        精确数值口径：``等级（当前经验/需求经验）``，固定加千分符；
+        无快照时服务层返回 ``-``，不抛异常。
+        """
+        self._commanderLevelCard.setValue(self._commander_service.getCommanderLevelCardText())
+        self._commanderLevelCard.setToolTip(self._commander_service.getCommanderLevelCardTooltip())
+
+    def updateResourceStats(self) -> None:
+        """
+        更新魔方 / 红尖尖卡片与悬停提示。
+
+        大概数值口径：用 K/M/B/T 缩写并保留一位小数；悬停显示精确数值与数据截止日期。
+        """
+        for card, resource_type in (
+            (self._cubeCard, RESOURCE_TYPE_CUBE),
+            (self._redGemCard, RESOURCE_TYPE_RED_GEM),
+        ):
+            card.setValue(self._resource_service.getCardText(resource_type))
+            card.setToolTip(self._resource_service.getCardTooltip(resource_type))
 
     def updateUnlockStats(self, unlock_stats: Dict[str, Any]) -> None:
         """

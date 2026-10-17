@@ -14,6 +14,7 @@ from PyQt5.QtGui import QIcon
 from views.main_window import MainWindow
 from services.codex_unlock_service import CodexUnlockService
 from utils.constants import APP_NAME, APP_ICON_PATH, DEFAULT_DB_PATH
+from utils.db_schema import ensureResourceStatisticsSchema
 
 
 def main() -> int:
@@ -34,6 +35,12 @@ def main() -> int:
 
     if not os.path.exists(DEFAULT_DB_PATH):
         print(f"警告: 数据库文件不存在: {DEFAULT_DB_PATH}")
+    else:
+        # 幂等建表：旧库缺少资源统计相关表时自动补齐，缺失不应阻止应用启动
+        try:
+            ensureResourceStatisticsSchema()
+        except Exception as e:
+            print(f"警告: 资源统计表结构初始化失败: {e}")
 
     unlock_service = CodexUnlockService()
 
