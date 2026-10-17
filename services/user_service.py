@@ -10,6 +10,7 @@ from typing import Optional
 from models.user_model import UserModel
 from repositories.user_repository import UserRepository
 from utils.exceptions import DatabaseError
+from utils.unit_formatter import formatExact
 
 
 class UserService:
@@ -62,8 +63,10 @@ class UserService:
         """
         获取执勤天数显示文本。
 
+        天数属于精确数值，固定加千分符（如 ``1,169天``）。
+
         Returns:
-            执勤天数文本，格式为"X天"。
+            执勤天数文本，格式为"X天"（X 带千分符）。
         """
         days = self.getDutyDays()
-        return f"{days}天"
+        return f"{formatExact(days)}天"
