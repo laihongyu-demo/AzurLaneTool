@@ -22,6 +22,7 @@ from services.codex_oath_service import CodexOathService, OathResult
 from services.statistics_service import StatisticsService
 from services.mental_calculation_service import MentalCalculationService, MentalCalculationResult
 from services.commander_service import CommanderService, CommanderWriteResult
+from services.cube_task_service import CubeTaskService, CubeTaskWriteResult
 from services.resource_service import ResourceService
 from views.widgets.statistics_panel import StatisticsPanel
 from views.widgets.ship_management_panel import ShipManagementPanel
@@ -50,6 +51,7 @@ class MainWindow(QMainWindow):
         statistics_service: StatisticsService = None,
         mental_calculation_service: MentalCalculationService = None,
         commander_service: CommanderService = None,
+        cube_task_service: CubeTaskService = None,
         resource_service: ResourceService = None
     ):
         """
@@ -66,6 +68,7 @@ class MainWindow(QMainWindow):
             statistics_service: 统计服务实例。
             mental_calculation_service: 心智计算服务实例。
             commander_service: 指挥官服务实例。
+            cube_task_service: 魔方任务看板服务实例。
             resource_service: 资源统计服务实例（只读）。
         """
         super().__init__()
@@ -79,6 +82,7 @@ class MainWindow(QMainWindow):
         self._statistics_service = statistics_service or StatisticsService()
         self._mental_calculation_service = mental_calculation_service or MentalCalculationService()
         self._commander_service = commander_service or CommanderService()
+        self._cube_task_service = cube_task_service or CubeTaskService()
         self._resource_service = resource_service or ResourceService()
 
         self._initUi()
@@ -128,7 +132,8 @@ class MainWindow(QMainWindow):
         self._tabWidget.addTab(self._shipManagementPanel, "舰娘管理")
 
         self._resourceManagementPanel = ResourceManagementPanel(
-            commander_service=self._commander_service
+            commander_service=self._commander_service,
+            cube_task_service=self._cube_task_service
         )
         self._tabWidget.addTab(self._resourceManagementPanel, "资源统计")
 
@@ -175,6 +180,7 @@ class MainWindow(QMainWindow):
         self._shipManagementPanel.oathResult.connect(self._onOathResult)
         self._resourceManagementPanel.dataRefreshed.connect(self._onResourceDataRefreshed)
         self._resourceManagementPanel.snapshotResult.connect(self._onCommanderSnapshotResult)
+        self._resourceManagementPanel.taskResult.connect(self._onCubeTaskResult)
 
     def _onRefreshClicked(self) -> None:
         """刷新按钮点击事件处理。"""
@@ -245,6 +251,15 @@ class MainWindow(QMainWindow):
     def _onCommanderSnapshotResult(self, result: CommanderWriteResult) -> None:
         """
         指挥官快照写操作结果事件处理。
+
+        Args:
+            result: 写操作结果对象。
+        """
+        self._statusBar.showMessage(result.toStatusBarMessage())
+
+    def _onCubeTaskResult(self, result: CubeTaskWriteResult) -> None:
+        """
+        魔方任务看板写操作结果事件处理。
 
         Args:
             result: 写操作结果对象。

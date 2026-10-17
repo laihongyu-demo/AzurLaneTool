@@ -87,3 +87,37 @@ QT_DATETIME_DISPLAY_FORMAT = "yyyy-MM-dd HH:mm"
 COMMANDER_LEVEL_MIN = 1
 COMMANDER_LEVEL_MAX = 200
 COMMANDER_SNAPSHOT_RECENT_LIMIT = 30
+
+# ---- 魔方任务看板 ----
+
+TASK_GROUP_DAILY = "daily"
+TASK_GROUP_WEEKLY = "weekly"
+TASK_GROUP_SIGNIN = "signin"
+TASK_GROUP_CRUISE = "cruise"
+TASK_GROUPS = (TASK_GROUP_DAILY, TASK_GROUP_WEEKLY, TASK_GROUP_SIGNIN, TASK_GROUP_CRUISE)
+
+TASK_GROUP_TITLES = {
+    TASK_GROUP_DAILY: "日常任务",
+    TASK_GROUP_WEEKLY: "周常任务",
+    TASK_GROUP_SIGNIN: "每月签到",
+    TASK_GROUP_CRUISE: "世界巡游",
+}
+
+# 展示分组：任务（日常 + 周常）／每月签到／世界巡游
+TASK_DISPLAY_GROUPS = (
+    ("task", "任务", (TASK_GROUP_DAILY, TASK_GROUP_WEEKLY)),
+    ("signin", "每月签到", (TASK_GROUP_SIGNIN,)),
+    ("cruise", "世界巡游", (TASK_GROUP_CRUISE,)),
+)
+
+TASK_PERIOD_DAY = "day"
+TASK_PERIOD_WEEK = "week"
+TASK_PERIOD_MONTH = "month"
+TASK_PERIOD_CRUISE = "cruise"
+
+# 世界巡游：每 2 个自然月为一期，起点为偶数月 1 日
+CRUISE_PERIOD_MONTHS = 2
+
+# 录入时写入明细的来源名（沿用历史事件名；签到类由历史「每日签到」改名为「每月签到」）
+TASK_CATEGORY_SIGNIN_LEGACY = "每日签到"
+TASK_CATEGORY_SIGNIN = "每月签到"
