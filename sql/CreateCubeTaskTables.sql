@@ -32,9 +32,9 @@ CREATE INDEX IF NOT EXISTS idx_cube_task_completion_period
 -- 任务定义（18 项）。奖励合计：每日 4 / 每周 12 / 每月 30 / 每期 50
 -- short_name 用于看板卡片（单行），name 作为完整名称放进 tooltip
 INSERT INTO cube_task (code, grp, name, short_name, reward, period_type, category, sort_order, active) VALUES
-    ('daily_battle_win',  'daily',  '日常任务·舰队出征，获得 3 次战斗胜利',      '战斗胜利×3',     2, 'day',    '日常任务', 10, 1),
-    ('daily_build_once',  'daily',  '日常任务·建造舰船 1 次',                    '建造 1 次',       1, 'day',    '日常任务', 20, 1),
-    ('daily_hard_stage',  'daily',  '日常任务·舰队出征，通关主线困难海域 1 次',  '困难海域 1 次',   1, 'day',    '日常任务', 30, 1),
+    ('daily_battle_win',  'daily',  '日常任务·舰队出征，获得 3 次战斗胜利',      '战斗×3',          2, 'day',    '日常任务', 10, 1),
+    ('daily_build_once',  'daily',  '日常任务·建造舰船 1 次',                    '建造',            1, 'day',    '日常任务', 20, 1),
+    ('daily_hard_stage',  'daily',  '日常任务·舰队出征，通关主线困难海域 1 次',  '困难海域',        1, 'day',    '日常任务', 30, 1),
     ('weekly_pt_150',     'weekly', '周常任务·周常 PT 累计 150',                 'PT 150',          3, 'week',   '周常任务', 110, 1),
     ('weekly_pt_350',     'weekly', '周常任务·周常 PT 累计 350',                 'PT 350',          3, 'week',   '周常任务', 120, 1),
     ('weekly_pt_750',     'weekly', '周常任务·周常 PT 累计 750',                 'PT 750',          6, 'week',   '周常任务', 130, 1),
