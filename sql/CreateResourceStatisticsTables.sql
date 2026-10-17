@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS resource_daily (
     expense          INTEGER,
     balance_override INTEGER CHECK (balance_override IS NULL OR balance_override >= 0),
     note             TEXT NOT NULL DEFAULT '',
+    last_record_time TEXT,
     created_at       TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     updated_at       TEXT,
     UNIQUE (resource_type, record_date),
@@ -28,7 +29,7 @@ CREATE TABLE IF NOT EXISTS resource_transaction (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     resource_type TEXT NOT NULL CHECK (resource_type IN ('cube', 'red_gem')),
     direction     TEXT NOT NULL CHECK (direction IN ('income', 'expense')),
-    record_date   TEXT NOT NULL,
+    record_time   TEXT NOT NULL,
     category      TEXT NOT NULL,
     amount        INTEGER NOT NULL CHECK (amount > 0),
     note          TEXT NOT NULL DEFAULT '',
@@ -54,8 +55,9 @@ CREATE TABLE IF NOT EXISTS commander_level_exp (
     note           TEXT NOT NULL DEFAULT ''
 );
 
-CREATE INDEX IF NOT EXISTS idx_resource_transaction_date
-    ON resource_transaction (resource_type, record_date);
+CREATE INDEX IF NOT EXISTS idx_resource_transaction_time
+    ON resource_transaction (resource_type, record_time);
 
 -- resource_daily 已有 UNIQUE (resource_type, record_date)，无需重复建索引。
 -- commander_info 的唯一索引由迁移脚本在时间规范化之后建立（见 tools/migrate_resource_statistics.py）。
+-- 旧库（明细 record_date 仅日期、日汇总缺 last_record_time）由 utils/db_schema.py 的幂等升级逻辑自动迁移。

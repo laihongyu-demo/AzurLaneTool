@@ -17,7 +17,7 @@ from utils.constants import (
     COMMANDER_LEVEL_MAX, COMMANDER_LEVEL_MIN, COMMANDER_SNAPSHOT_RECENT_LIMIT,
     STATISTICS_DATETIME_FORMAT,
 )
-from utils.db_schema import isMissingTableError
+from utils.db_schema import isMissingColumnError, isMissingTableError
 from utils.exceptions import DatabaseError, ValidationError
 from utils.unit_formatter import formatExact
 
@@ -96,7 +96,7 @@ class CommanderService:
         try:
             return self._commander_repository.findLatest()
         except DatabaseError as e:
-            if isMissingTableError(e):
+            if isMissingTableError(e) or isMissingColumnError(e):
                 return None
             raise
 
@@ -113,7 +113,7 @@ class CommanderService:
         try:
             return self._commander_repository.findLevelExp(level)
         except DatabaseError as e:
-            if isMissingTableError(e):
+            if isMissingTableError(e) or isMissingColumnError(e):
                 return None
             raise
 
@@ -143,7 +143,7 @@ class CommanderService:
                 return self._commander_repository.findRecent(limit)
             return self._commander_repository.findAll()
         except DatabaseError as e:
-            if isMissingTableError(e):
+            if isMissingTableError(e) or isMissingColumnError(e):
                 return []
             raise
 

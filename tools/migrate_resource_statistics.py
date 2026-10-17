@@ -305,13 +305,13 @@ def importResource(
     last_date: str = source["last_date"]  # type: ignore[assignment]
     daily_totals = buildDailyTotals(transactions)
 
-    # 1) 明细
+    # 1) 明细（原表格只有日期，时间统一补 00:00:00；后续录入才会带真实时刻）
     for direction, record_date, category, amount in transactions:
         conn.execute(
             "INSERT INTO resource_transaction"
-            " (resource_type, direction, record_date, category, amount)"
+            " (resource_type, direction, record_time, category, amount)"
             " VALUES (?, ?, ?, ?, ?)",
-            (resource_type, direction, record_date, category, amount),
+            (resource_type, direction, f"{record_date} 00:00:00", category, amount),
         )
 
     # 2) 日汇总（明细日不存收支，汇总日存收支）
@@ -334,15 +334,17 @@ def importResource(
                 )
             conn.execute(
                 "INSERT INTO resource_daily"
-                " (resource_type, record_date, detail_mode, income, expense, balance_override, note)"
-                " VALUES (?, ?, 'detail', NULL, NULL, ?, ?)",
-                (resource_type, record_date, override, note),
+                " (resource_type, record_date, detail_mode, income, expense, balance_override,"
+                "  note, last_record_time)"
+                " VALUES (?, ?, 'detail', NULL, NULL, ?, ?, ?)",
+                (resource_type, record_date, override, note, f"{record_date} 00:00:00"),
             )
         else:
             conn.execute(
                 "INSERT INTO resource_daily"
-                " (resource_type, record_date, detail_mode, income, expense, balance_override, note)"
-                " VALUES (?, ?, 'summary_only', ?, ?, ?, ?)",
+                " (resource_type, record_date, detail_mode, income, expense, balance_override,"
+                "  note, last_record_time)"
+                " VALUES (?, ?, 'summary_only', ?, ?, ?, ?, NULL)",
                 (resource_type, record_date, int(item["income"]), int(item["expense"]), override, note),
             )
 
@@ -575,7 +577,8 @@ def verify(conn: sqlite3.Connection, source_dir: str, stats: MigrationStats) -> 
             else:
                 totals = conn.execute(
                     "SELECT direction, COALESCE(SUM(amount), 0) FROM resource_transaction"
-                    " WHERE resource_type = ? AND record_date = ? GROUP BY direction",
+                    " WHERE resource_type = ? AND substr(record_time, 1, 10) = ?"
+                    " GROUP BY direction",
                     (resource_type, record_date),
                 ).fetchall()
                 aggregated = {direction: amount for direction, amount in totals}
@@ -636,10 +639,11 @@ def calculateBalanceChain(
     totals = {
         record_date: {"income": income, "expense": expense}
         for record_date, income, expense in conn.execute(
-            "SELECT record_date,"
+            "SELECT substr(record_time, 1, 10),"
             " COALESCE(SUM(CASE WHEN direction = 'income' THEN amount END), 0),"
             " COALESCE(SUM(CASE WHEN direction = 'expense' THEN amount END), 0)"
-            " FROM resource_transaction WHERE resource_type = ? GROUP BY record_date",
+            " FROM resource_transaction WHERE resource_type = ?"
+            " GROUP BY substr(record_time, 1, 10)",
             (resource_type,),
         )
     }

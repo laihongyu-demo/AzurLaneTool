@@ -32,6 +32,8 @@ class ResourceDailyModel(BaseModel):
         expense: 当日支出（仅 ``summary_only`` 使用）。
         balance_override: 手填结余，作为累加锚点；None 表示自动累加。
         note: 备注。
+        last_record_time: 该日最后一笔明细的准确时刻（``yyyy-MM-dd HH:mm:ss``）；
+            None 表示该日只有日期信息（历史汇总日）或尚无明细。
         created_at: 创建时间。
         updated_at: 更新时间。
     """
@@ -44,6 +46,7 @@ class ResourceDailyModel(BaseModel):
     expense: Optional[int] = None
     balance_override: Optional[int] = None
     note: str = ""
+    last_record_time: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -59,7 +62,8 @@ class ResourceTransactionModel(BaseModel):
         id: 记录 ID。
         resource_type: 资源类型，``cube`` 或 ``red_gem``。
         direction: 方向，``income`` 或 ``expense``。
-        record_date: 记录日期，格式 ``yyyy-MM-dd``。
+        record_time: 发生时刻，格式 ``yyyy-MM-dd HH:mm:ss``。录入时可手填以支持补录
+            （例如今天补录昨天发生的记录），日期部分决定归属哪一天。
         category: 来源 / 去向名称。
         amount: 数量，必须大于 0。
         note: 备注。
@@ -70,7 +74,7 @@ class ResourceTransactionModel(BaseModel):
     id: Optional[int] = None
     resource_type: str = RESOURCE_TYPE_CUBE
     direction: str = RESOURCE_DIRECTION_INCOME
-    record_date: str = ""
+    record_time: str = ""
     category: str = ""
     amount: int = 1
     note: str = ""
