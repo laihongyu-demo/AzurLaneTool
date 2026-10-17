@@ -43,6 +43,7 @@ def ensureResourceStatisticsSchema(db_path: Optional[str] = None) -> None:
     with DatabaseContext(path) as conn:
         # 先升级旧结构：表不存在时各步骤自动跳过，不会误建/误改
         _upgradeLegacySchema(conn)
+        _upgradeCubeTaskSchema(conn)
         conn.executescript(resource_sql)
         conn.executescript(task_sql)
         _backfillLastRecordTime(conn)
@@ -90,6 +91,20 @@ def _upgradeLegacySchema(conn: sqlite3.Connection) -> None:
     daily_columns = _tableColumns(conn, "resource_daily")
     if daily_columns and "last_record_time" not in daily_columns:
         conn.execute("ALTER TABLE resource_daily ADD COLUMN last_record_time TEXT")
+
+
+def _upgradeCubeTaskSchema(conn: sqlite3.Connection) -> None:
+    """
+    为早期的 ``cube_task`` 补 ``short_name`` 列（看板卡片短标签）。
+
+    新库由 SQL 脚本直接建出该列，这里只处理已存在但缺列的老库；可重复执行。
+
+    Args:
+        conn: 数据库连接。
+    """
+    columns = _tableColumns(conn, "cube_task")
+    if columns and "short_name" not in columns:
+        conn.execute("ALTER TABLE cube_task ADD COLUMN short_name TEXT NOT NULL DEFAULT ''")
 
 
 def _backfillLastRecordTime(conn: sqlite3.Connection) -> None:

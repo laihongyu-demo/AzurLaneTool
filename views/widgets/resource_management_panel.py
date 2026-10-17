@@ -7,8 +7,8 @@
 
 from typing import Optional
 
-from PyQt5.QtCore import pyqtSignal
-from PyQt5.QtWidgets import QGridLayout, QWidget
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtWidgets import QFrame, QGridLayout, QScrollArea, QVBoxLayout, QWidget
 
 from services.commander_service import CommanderService, CommanderWriteResult
 from services.cube_task_service import CubeTaskService, CubeTaskWriteResult
@@ -20,7 +20,8 @@ class ResourceManagementPanel(QWidget):
     """
     资源统计面板控件。
 
-    与「舰娘管理」页签保持同一组织方式：一个页签内以网格承载多个面板。
+    与「舰娘管理」页签保持同一组织方式：一个页签内以网格承载多个面板，
+    整体放进竖向滚动区，内容高于窗口时滚动浏览，而不是把控件压扁。
     """
 
     dataRefreshed = pyqtSignal()
@@ -49,7 +50,12 @@ class ResourceManagementPanel(QWidget):
 
     def _initUi(self) -> None:
         """初始化用户界面。"""
-        layout = QGridLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        content = QWidget()
+        layout = QGridLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(15)
 
@@ -58,6 +64,17 @@ class ResourceManagementPanel(QWidget):
 
         layout.addWidget(self._taskBoardPanel, 0, 0)
         layout.addWidget(self._commanderPanel, 1, 0)
+        # 内容不足一屏时多出的空间留在底部，避免面板被纵向拉伸
+        layout.setRowStretch(2, 1)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setWidget(content)
+
+        outer.addWidget(scroll)
 
     def _connectSignals(self) -> None:
         """连接信号与槽。"""
