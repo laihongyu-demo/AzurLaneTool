@@ -5,8 +5,9 @@
 单击完成即自动记账，双击已完成项取消（删除对应明细）。
 
 布局约定：
-- 「魔方任务看板」是页签级分组；其内部的任务 / 签到 / 世界巡游 / 常规录入四个分组**同级**；
-- 分组宽度按内容收紧（卡片宽度由文字实际宽度决定），使用流式布局，窗口宽时并排、窄时换行；
+- 「魔方任务看板」是页签级分组；其内部 任务 / 每月签到 / 世界巡游 / 常规录入 四个分组同级；
+- 分组与卡片都填满所在网格单元（``Expanding``），右边缘对齐、不留缺口；
+- 列数按可用宽度自适应：宽屏 2 列、窄屏 1 列，切换时重排；
 - 卡片只显示短标签（``short_name``），完整任务名放 tooltip，避免长文本撑宽控件。
 """
 
@@ -24,7 +25,6 @@ from services.cube_task_service import (
 )
 from utils.constants import QT_DATE_DISPLAY_FORMAT, TASK_GROUP_DAILY, TASK_GROUP_WEEKLY
 from utils.exceptions import DatabaseError, ValidationError
-from views.widgets.flow_layout import FlowLayout
 
 COMPLETED_STYLE = """
 QPushButton {
@@ -64,11 +64,11 @@ QPushButton {
 }
 """
 
-# 单个分组内每行最多几张卡：巡游 8 档排成 4 + 4，避免分组过宽
+# 单个分组内每行卡片数：巡游 8 档排成 4 + 4
 CARDS_PER_ROW = 4
 
-# 卡片最小宽度（文字极短时也不至于过窄）
-MIN_CARD_WIDTH = 112
+# 面板宽度达到该值时分组按 2 列排布；再窄就单列，避免卡片文字被挤掉
+TWO_COLUMN_MIN_WIDTH = 940
 
 
 def buildCardText(task, completed: bool) -> str:
@@ -92,7 +92,7 @@ class CubeTaskCard(QPushButton):
     单个任务卡片。
 
     保持控件可用（不调用 ``setEnabled(False)``），否则双击事件收不到，取消功能会失效。
-    已完成时单击无效，双击发出取消请求。
+    已完成时单击无效，双击发出取消请求；宽度随网格单元拉伸，保证行内无缺口。
     """
 
     completeRequested = pyqtSignal(str)
@@ -102,9 +102,6 @@ class CubeTaskCard(QPushButton):
         """
         初始化任务卡片。
 
-        宽度不在这里固定：面板会先按各自 ``sizeHint``（含样式内边距与 12px 字号）
-        算出统一宽度再统一设置，避免用 fontMetrics 估算导致偏宽或截断。
-
         Args:
             state: 任务状态。
             parent: 父控件。
@@ -112,8 +109,10 @@ class CubeTaskCard(QPushButton):
         super().__init__(parent)
         self._state = state
         self.setCursor(Qt.PointingHandCursor)
-        self.setMinimumHeight(40)
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.setMinimumHeight(38)
+        self.setMaximumHeight(44)
+        self.setMinimumWidth(84)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._applyState()
         self.clicked.connect(self._onClicked)
 
@@ -156,8 +155,8 @@ class CubeTaskBoardPanel(QWidget):
     """
     魔方任务看板面板。
 
-    顶部选择「记账日期」（补录时切到过去）；下方四个同级分组：任务 / 每月签到 /
-    世界巡游 / 常规录入，流式排列。整体由外层页签的滚动区承载。
+    顶部选择「记账日期」（补录时切到过去）；下方四个同级分组按网格铺满，
+    宽屏两列、窄屏单列，右边缘对齐不留缺口。
     """
 
     dataRefreshed = pyqtSignal()
@@ -175,7 +174,7 @@ class CubeTaskBoardPanel(QWidget):
         self._task_service = task_service or CubeTaskService()
         self._state_by_code: Dict[str, CubeTaskState] = {}
         self._groups: List[CubeTaskGroupView] = []
-        self._rendered_cards: List[CubeTaskCard] = []
+        self._current_columns = 0
 
         self._initUi()
         self._connectSignals()
@@ -196,7 +195,9 @@ class CubeTaskBoardPanel(QWidget):
 
         group_layout.addLayout(self._buildHeader())
 
-        self._boardLayout = FlowLayout(h_spacing=12, v_spacing=12)
+        self._boardLayout = QGridLayout()
+        self._boardLayout.setHorizontalSpacing(12)
+        self._boardLayout.setVerticalSpacing(12)
         group_layout.addLayout(self._boardLayout)
 
         self._hintLabel = QLabel(
@@ -334,6 +335,24 @@ class CubeTaskBoardPanel(QWidget):
 
     # --------------------------------------------------------------- 渲染
 
+    def resizeEvent(self, event) -> None:
+        """宽度变化导致列数改变时重新排布（保持右边缘对齐）。"""
+        super().resizeEvent(event)
+        if self._groups and self._columnCount() != self._current_columns:
+            self._renderBoard()
+
+    def _columnCount(self) -> int:
+        """
+        当前宽度下分组的列数。
+
+        Returns:
+            2（宽屏）或 1（窄屏）。
+        """
+        width = self.width()
+        if width <= 0 and self.parentWidget() is not None:
+            width = self.parentWidget().width()
+        return 2 if width >= TWO_COLUMN_MIN_WIDTH else 1
+
     def refreshData(self) -> None:
         """按当前记账日期重新渲染看板。"""
         selected = self._selectedDate()
@@ -373,18 +392,6 @@ class CubeTaskBoardPanel(QWidget):
             labels.append(f"{prefix} {info.label}")
         return "｜".join(labels)
 
-    def _cardWidth(self) -> int:
-        """
-        按卡片实际 sizeHint 计算统一宽度（含样式内边距），保证文字不被截断。
-
-        Returns:
-            卡片宽度（像素）。
-        """
-        if not self._rendered_cards:
-            return MIN_CARD_WIDTH
-        widest = max(card.sizeHint().width() for card in self._rendered_cards)
-        return max(MIN_CARD_WIDTH, widest + 4)
-
     def _clearBoard(self) -> None:
         """清空看板容器。"""
         while self._boardLayout.count():
@@ -392,21 +399,28 @@ class CubeTaskBoardPanel(QWidget):
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
-        self._rendered_cards = []
 
     def _renderBoard(self) -> None:
-        """渲染任务 / 签到 / 世界巡游 / 常规录入 四个同级分组。"""
+        """把四个同级分组按当前列数铺进网格（右边缘对齐、不留缺口）。"""
         self._clearBoard()
+        columns = self._columnCount()
+        self._current_columns = columns
 
-        # 先按自然尺寸创建全部卡片，再统一宽度，避免逐组估算导致参差不齐
-        for group_view in self._groups:
-            self._boardLayout.addWidget(self._buildGroupBox(group_view))
+        widgets: List[QWidget] = [self._buildGroupBox(view) for view in self._groups]
+        widgets.append(self._buildReservedGroup())
 
-        card_width = self._cardWidth()
-        for card in self._rendered_cards:
-            card.setFixedSize(card_width, 40)
+        # 先清空历史列伸缩：从 2 列切到 1 列时，遗留的列伸缩会占住空白列，导致右侧出现大片缺口
+        for column in range(6):
+            self._boardLayout.setColumnStretch(column, 0)
 
-        self._boardLayout.addWidget(self._buildReservedGroup(card_width))
+        for index, widget in enumerate(widgets):
+            self._boardLayout.addWidget(widget, index // columns, index % columns)
+
+        for column in range(columns):
+            self._boardLayout.setColumnStretch(column, 1)
+
+        # 重排可能发生在 resizeEvent 中，立即激活一次，避免沿用旧几何导致右侧留白
+        self._boardLayout.activate()
 
     def _buildGroupBox(self, group_view: CubeTaskGroupView) -> QGroupBox:
         """
@@ -423,13 +437,15 @@ class CubeTaskBoardPanel(QWidget):
             if group_view.total else group_view.title
         )
         group_box = QGroupBox(title)
-        group_box.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
+        group_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         if group_view.earned >= group_view.total and group_view.total:
             group_box.setStyleSheet("QGroupBox { color: #2e7d32; }")
 
         outer = QVBoxLayout(group_box)
         outer.setContentsMargins(10, 14, 10, 10)
         outer.setSpacing(4)
+        # 行内分组等高，内容垂直居中，避免短分组顶部对齐后底部留出突兀的空白
+        outer.addStretch()
 
         if group_view.key == "task":
             # 任务组内再分「日常」「周常」两个小节
@@ -441,23 +457,22 @@ class CubeTaskBoardPanel(QWidget):
                 outer.addLayout(self._buildCardGrid(tasks))
         else:
             outer.addLayout(self._buildCardGrid(group_view.tasks))
+
+        outer.addStretch()
         return group_box
 
-    def _buildReservedGroup(self, card_width: int) -> QGroupBox:
+    def _buildReservedGroup(self) -> QGroupBox:
         """
         构建「常规录入」分组（与任务 / 签到 / 巡游同级）。
-
-        Args:
-            card_width: 卡片宽度，用于与同排分组的视觉尺度对齐。
 
         Returns:
             占位分组控件。
         """
         group_box = QGroupBox("常规录入")
-        group_box.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
+        group_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         layout = QVBoxLayout(group_box)
-        layout.setContentsMargins(10, 14, 10, 10)
+        layout.setContentsMargins(10, 14, 10, 14)
 
         hint = QLabel(
             "活动建造、特型建造、礼包等非固定收支的手工录入表单将加入本区域"
@@ -465,9 +480,9 @@ class CubeTaskBoardPanel(QWidget):
             self,
         )
         hint.setWordWrap(True)
-        hint.setFixedWidth(max(card_width * 2, 240))
         hint.setStyleSheet("color: #888;")
         layout.addWidget(hint)
+        layout.addStretch()
         return group_box
 
     def _buildSubTitle(self, text: str, tasks: List[CubeTaskState]) -> QLabel:
@@ -489,7 +504,7 @@ class CubeTaskBoardPanel(QWidget):
 
     def _buildCardGrid(self, tasks: List[CubeTaskState]) -> QGridLayout:
         """
-        构建卡片网格（定宽卡片，不再拉伸）。
+        构建卡片网格：卡片均分所在分组宽度，行内不留缺口。
 
         Args:
             tasks: 任务状态列表。
@@ -498,7 +513,7 @@ class CubeTaskBoardPanel(QWidget):
             网格布局。
         """
         grid = QGridLayout()
-        grid.setHorizontalSpacing(8)
+        grid.setHorizontalSpacing(6)
         grid.setVerticalSpacing(6)
 
         columns = max(1, min(CARDS_PER_ROW, len(tasks)))
@@ -507,5 +522,6 @@ class CubeTaskBoardPanel(QWidget):
             card.completeRequested.connect(self._onCompleteRequested)
             card.cancelRequested.connect(self._onCancelRequested)
             grid.addWidget(card, index // columns, index % columns)
-            self._rendered_cards.append(card)
+        for column in range(columns):
+            grid.setColumnStretch(column, 1)
         return grid
