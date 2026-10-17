@@ -114,6 +114,7 @@ class ResourceEntryService:
     def record(
         self,
         category: str,
+        direction: str,
         amount: int,
         moment: datetime,
         resource_type: str = RESOURCE_TYPE_CUBE,
@@ -124,6 +125,8 @@ class ResourceEntryService:
 
         Args:
             category: 类型名称，需存在于类型字典中。
+            direction: 方向，``income`` 或 ``expense``。同一类型名可能同时存在于两个方向
+                （如红尖尖的「礼包」），因此不能只靠名字推断。
             amount: 数量（正整数）。
             moment: 发生时刻，不能晚于当前时间。
             resource_type: 资源类型。
@@ -135,7 +138,7 @@ class ResourceEntryService:
         Raises:
             ValidationError: 当类型不存在、数量非法、时刻越界或目标日期属于历史汇总段时抛出。
         """
-        direction = self._resolveDirection(category, resource_type)
+        self._validatePair(category, direction, resource_type)
         self._validateAmount(amount)
         self._validateMoment(moment)
         self._validateTargetDay(resource_type, moment)
@@ -165,27 +168,84 @@ class ResourceEntryService:
         )
         return ResourceEntryResult(True, message, transaction_id)
 
-    # ------------------------------------------------------------- 校验
+    # ------------------------------------------------------------- 撤销
 
-    def _resolveDirection(self, category: str, resource_type: str) -> str:
+    def getUndoableEntry(
+        self, resource_type: str = RESOURCE_TYPE_CUBE
+    ) -> Optional[ResourceTransactionModel]:
         """
-        按类型字典解析方向。
+        查询可撤销的最近一笔常规录入。
+
+        只针对「非任务来源」的明细：任务卡片的完成/取消由看板自己负责，
+        撤销按钮不应该把任务记账删掉。
 
         Args:
-            category: 类型名称。
             resource_type: 资源类型。
 
         Returns:
-            ``income`` 或 ``expense``。
+            明细模型；没有可撤销记录时返回 None。
+        """
+        return self._repository.findLatestManualTransaction(resource_type)
+
+    def undoLast(self, resource_type: str = RESOURCE_TYPE_CUBE) -> ResourceEntryResult:
+        """
+        撤销最近一笔常规录入。
+
+        删除明细；若该日已无任何明细，连当日汇总行一起清掉（撤销后不该留下空行），
+        否则按剩余明细重算末次时刻。
+
+        Args:
+            resource_type: 资源类型。
+
+        Returns:
+            撤销结果。
 
         Raises:
-            ValidationError: 类型不存在时抛出。
+            ValidationError: 没有可撤销的常规录入时抛出。
         """
-        for direction in (RESOURCE_DIRECTION_EXPENSE, RESOURCE_DIRECTION_INCOME):
-            for record in self._repository.findCategories(resource_type, direction):
-                if record.name == category:
-                    return direction
-        raise ValidationError(f"未知的收支类型：{category}")
+        target = self.getUndoableEntry(resource_type)
+        if target is None:
+            raise ValidationError("没有可撤销的常规录入")
+
+        record_date_text = target.record_time[:10]
+        with DatabaseContext(self._repository.dbPath) as conn:
+            self._repository.deleteTransaction(target.id, conn)
+            remaining = self._repository.countTransactionsByDate(
+                resource_type, record_date_text, conn
+            )
+            if remaining == 0:
+                self._repository.deleteDaily(resource_type, record_date_text, conn)
+            else:
+                self._repository.recomputeLastRecordTime(resource_type, record_date_text, conn)
+
+        direction_name = RESOURCE_DIRECTION_NAMES.get(target.direction, target.direction)
+        resource_name = RESOURCE_DISPLAY_NAMES.get(resource_type, resource_type)
+        message = (
+            f"已撤销：{resource_name} {direction_name} {target.amount}"
+            f"（{target.category}，{target.record_time}）"
+        )
+        return ResourceEntryResult(True, message, 0)
+
+    # ------------------------------------------------------------- 校验
+
+    def _validatePair(self, category: str, direction: str, resource_type: str) -> None:
+        """
+        校验「类型 + 方向」是否存在于类型字典。
+
+        Args:
+            category: 类型名称。
+            direction: 方向。
+            resource_type: 资源类型。
+
+        Raises:
+            ValidationError: 类型或方向不存在时抛出。
+        """
+        if direction not in RESOURCE_DIRECTION_NAMES:
+            raise ValidationError(f"未知的收支方向：{direction}")
+        names = {record.name for record in self._repository.findCategories(resource_type, direction)}
+        if category not in names:
+            direction_name = RESOURCE_DIRECTION_NAMES.get(direction, direction)
+            raise ValidationError(f"未知的收支类型：{category}（{direction_name}）")
 
     def _validateAmount(self, amount: int) -> None:
         """

@@ -387,6 +387,7 @@ class CubeTaskBoardPanel(QWidget):
         }
         self._renderBoard()
         self._periodLabel.setText(self._formatPeriodSummary(period_info))
+        self._entry_panel.refreshState()
 
     def _formatPeriodSummary(self, period_info: Dict) -> str:
         """

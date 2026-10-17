@@ -17,7 +17,9 @@ from PyQt5.QtWidgets import (
 )
 
 from services.cube_task_service import CubeTaskService, CubeTaskWriteResult
+from utils.constants import RESOURCE_TYPE_RED_GEM
 from views.widgets.cube_task_board_panel import CubeTaskBoardPanel
+from views.widgets.regular_entry_panel import RegularEntryPanel
 
 
 class ResourceManagementPanel(QWidget):
@@ -56,7 +58,8 @@ class ResourceManagementPanel(QWidget):
 
         content = QWidget()
         layout = QVBoxLayout(content)
-        layout.setContentsMargins(0, 0, 0, 0)
+        # 顶部留出与两个看板间距一致的空隙，避免第一个分组贴着页签边缘
+        layout.setContentsMargins(0, 15, 0, 0)
         layout.setSpacing(15)
 
         self._taskBoardPanel = CubeTaskBoardPanel(self._cube_task_service)
@@ -75,23 +78,29 @@ class ResourceManagementPanel(QWidget):
 
     def _buildRedGemBoard(self) -> QGroupBox:
         """
-        构建红尖尖任务看板（与魔方任务看板同级，暂为占位）。
+        构建红尖尖任务看板（与魔方任务看板同级）。
+
+        红尖尖目前没有固定数量的周期性来源，因此这里只放与魔方常规录入同规格的
+        录入组件，后续出现固定奖励再补任务卡片。
 
         Returns:
-            占位分组控件。
+            红尖尖看板分组控件。
         """
         group = QGroupBox("红尖尖任务看板")
         layout = QVBoxLayout(group)
         layout.setContentsMargins(12, 16, 12, 12)
+        layout.setSpacing(8)
 
-        hint = QLabel(
-            "红尖尖目前没有固定数量的周期性来源，暂无任务卡片。"
-            "后续如出现同类固定奖励（或需要手工录入），将在此接入（见 issue #17）。",
-            self,
-        )
+        hint = QLabel("红尖尖暂无固定奖励任务，可直接补记收支；方向由类型决定。", self)
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #888;")
+        hint.setStyleSheet("color: #888; font-size: 12px;")
         layout.addWidget(hint)
+
+        self._redGemEntryPanel = RegularEntryPanel(
+            resource_type=RESOURCE_TYPE_RED_GEM, parent=self
+        )
+        layout.addWidget(self._redGemEntryPanel)
+        layout.addStretch()
         return group
 
     def _connectSignals(self) -> None:
@@ -99,6 +108,8 @@ class ResourceManagementPanel(QWidget):
         self._taskBoardPanel.dataRefreshed.connect(self._onDataRefreshed)
         self._taskBoardPanel.resultReady.connect(self._onTaskResult)
         self._taskBoardPanel.entryResult.connect(self.entryResult.emit)
+        self._redGemEntryPanel.dataRefreshed.connect(self._onDataRefreshed)
+        self._redGemEntryPanel.entryRecorded.connect(self.entryResult.emit)
 
     def _onDataRefreshed(self) -> None:
         """子面板数据刷新完成事件处理。"""
@@ -111,4 +122,4 @@ class ResourceManagementPanel(QWidget):
     def refreshData(self) -> None:
         """刷新界面数据。"""
         self._taskBoardPanel.refreshData()
-        self._taskBoardPanel._entry_panel.refreshCategories()
+        self._redGemEntryPanel.refreshState()

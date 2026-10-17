@@ -270,6 +270,94 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
         except Exception as e:
             raise DatabaseError(f"查询资源明细失败: {e}")
 
+    def findLatestManualTransaction(self, resource_type: str) -> Optional[ResourceTransactionModel]:
+        """
+        查询最近一笔「非任务来源」的明细（供常规录入撤销使用）。
+
+        任务看板写入的明细会在 ``cube_task_completion.transaction_id`` 留下引用，
+        这里用反连接把它们排除，避免撤销误伤任务卡片。
+
+        Args:
+            resource_type: 资源类型。
+
+        Returns:
+            明细模型；没有可撤销记录时返回 None。
+
+        Raises:
+            DatabaseError: 当查询失败时抛出。
+        """
+        sql = f"""
+            SELECT t.id, t.resource_type, t.direction, t.record_time, t.category,
+                   t.amount, t.note, t.created_at, t.updated_at
+            FROM {self.TRANSACTION_TABLE} t
+            LEFT JOIN cube_task_completion c ON c.transaction_id = t.id
+            WHERE t.resource_type = ? AND c.id IS NULL
+            ORDER BY t.record_time DESC, t.id DESC
+            LIMIT 1
+        """
+        try:
+            results = DatabaseConnection.executeQuery(sql, (resource_type,))
+            return ResourceTransactionModel.fromDict(results[0]) if results else None
+        except Exception as e:
+            raise DatabaseError(f"查询最近一笔常规录入失败: {e}")
+
+    def countTransactionsByDate(
+        self, resource_type: str, record_date: str, conn: Optional[sqlite3.Connection] = None
+    ) -> int:
+        """
+        统计某日的明细笔数（撤销后判断是否要清掉空日汇总行）。
+
+        Args:
+            resource_type: 资源类型。
+            record_date: 日期 ``yyyy-MM-dd``。
+            conn: 可选的调用方连接。
+
+        Returns:
+            该日剩余明细笔数。
+
+        Raises:
+            DatabaseError: 当查询失败时抛出。
+        """
+        sql = f"""
+            SELECT COUNT(*) AS total
+            FROM {self.TRANSACTION_TABLE}
+            WHERE resource_type = ? AND substr(record_time, 1, 10) = ?
+        """
+        params = (resource_type, record_date)
+        try:
+            if conn is not None:
+                row = conn.execute(sql, params).fetchone()
+                return int(row[0]) if row else 0
+            results = DatabaseConnection.executeQuery(sql, params)
+            return int(results[0]["total"]) if results else 0
+        except sqlite3.Error as e:
+            raise DatabaseError(f"统计资源明细笔数失败: {e}")
+
+    def deleteDaily(
+        self, resource_type: str, record_date: str, conn: Optional[sqlite3.Connection] = None
+    ) -> None:
+        """
+        删除某日的日汇总行（仅用于撤销后该日已无任何明细的场景）。
+
+        Args:
+            resource_type: 资源类型。
+            record_date: 日期 ``yyyy-MM-dd``。
+            conn: 可选的调用方连接。
+
+        Raises:
+            DatabaseError: 当删除失败时抛出。
+        """
+        sql = f"DELETE FROM {self.DAILY_TABLE} WHERE resource_type = ? AND record_date = ?"
+        params = (resource_type, record_date)
+        try:
+            if conn is not None:
+                conn.execute(sql, params)
+                return
+            with self._getConnection() as own:
+                own.execute(sql, params)
+        except sqlite3.Error as e:
+            raise DatabaseError(f"删除资源日汇总失败: {e}")
+
     def findCategories(self, resource_type: str, direction: str) -> List[ResourceCategoryModel]:
         """
         查询事件字典。
