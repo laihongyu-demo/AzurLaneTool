@@ -100,7 +100,7 @@ class TestCommanderExpPanel(_TempDatabaseCase):
         panel = CommanderExpPanel(CommanderService())
 
         self.assertEqual(panel._table.rowCount(), 2)
-        self.assertEqual(panel._countLabel.text(), "共 2 条")
+        self.assertEqual(panel._countLabel.text(), "2 条")
         self.assertIn("354,350", panel._requirementLabel.text())
         self.assertIn("11,568,960", panel._requirementLabel.text())
 
@@ -173,7 +173,7 @@ class TestCommanderExpPanel(_TempDatabaseCase):
         panel = CommanderExpPanel(CommanderService())
 
         self.assertEqual(panel._table.rowCount(), 0)
-        self.assertEqual(panel._countLabel.text(), "共 0 条")
+        self.assertEqual(panel._countLabel.text(), "0 条")
 
     def testEnsureSchemaCreatesResourceTables(self):
         """启动建表可重复执行，并能补齐缺失的资源表。"""

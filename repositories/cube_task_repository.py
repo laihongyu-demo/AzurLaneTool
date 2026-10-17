@@ -35,7 +35,8 @@ class CubeTaskRepository(BaseRepository[CubeTaskModel]):
             DatabaseError: 当查询失败时抛出。
         """
         sql = f"""
-            SELECT code, grp, name, reward, period_type, category, sort_order, active
+            SELECT code, grp, name, short_name, reward, period_type, category,
+                   sort_order, active
             FROM {self.TASK_TABLE}
             WHERE active = 1
             ORDER BY sort_order
@@ -75,7 +76,8 @@ class CubeTaskRepository(BaseRepository[CubeTaskModel]):
             DatabaseError: 当查询失败时抛出。
         """
         sql = f"""
-            SELECT code, grp, name, reward, period_type, category, sort_order, active
+            SELECT code, grp, name, short_name, reward, period_type, category,
+                   sort_order, active
             FROM {self.TASK_TABLE}
             WHERE code = ? AND active = 1
         """

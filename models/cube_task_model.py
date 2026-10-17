@@ -20,7 +20,8 @@ class CubeTaskModel(BaseModel):
     Attributes:
         code: 任务编码，主键（如 ``daily_build_once``）。
         grp: 分组，``daily`` / ``weekly`` / ``signin`` / ``cruise``。
-        name: 任务名称。
+        name: 任务完整名称（用于 tooltip 与明细备注）。
+        short_name: 看板卡片用的短标签（单行显示）。
         reward: 完成奖励（魔方数量）。
         period_type: 周期类型，``day`` / ``week`` / ``month`` / ``cruise``。
         category: 写入明细时使用的来源名。
@@ -31,6 +32,7 @@ class CubeTaskModel(BaseModel):
     code: str = ""
     grp: str = ""
     name: str = ""
+    short_name: str = ""
     reward: int = 0
     period_type: str = ""
     category: str = ""

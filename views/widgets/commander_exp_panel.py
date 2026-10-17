@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 from PyQt5.QtCore import QDate, QDateTime, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QAbstractItemView, QDateEdit, QDateTimeEdit, QGridLayout, QGroupBox, QHBoxLayout,
-    QHeaderView, QLabel, QMessageBox, QPushButton, QSpinBox, QTableWidget,
+    QHeaderView, QLabel, QMessageBox, QPushButton, QSizePolicy, QSpinBox, QTableWidget,
     QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -93,7 +93,11 @@ class CommanderExpPanel(QWidget):
         self._timeEdit.setDisplayFormat(QT_DATETIME_DISPLAY_FORMAT)
         self._timeEdit.setCalendarPopup(True)
         self._timeEdit.setDateTime(QDateTime.currentDateTime())
-        self._timeEdit.setMinimumWidth(180)
+        self._timeEdit.setMinimumWidth(150)
+        # 限定最大宽度并忽略 sizeHint：QDateTimeEdit 的 minimumSizeHint 约 300px，
+        # 不处理会把整行撑到 750px+，在 800 宽窗口下出现横向滚动条
+        self._timeEdit.setMaximumWidth(175)
+        self._timeEdit.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
 
         self._levelSpin = QSpinBox(self)
         self._levelSpin.setRange(COMMANDER_LEVEL_MIN, COMMANDER_LEVEL_MAX)
@@ -108,7 +112,7 @@ class CommanderExpPanel(QWidget):
         self._modeLabel = QLabel("新增记录", self)
         self._modeLabel.setStyleSheet("color: #1565c0;")
 
-        form.addWidget(QLabel("记录时间:", self), 0, 0)
+        form.addWidget(QLabel("时间:", self), 0, 0)
         form.addWidget(self._timeEdit, 0, 1)
         form.addWidget(QLabel("等级:", self), 0, 2)
         form.addWidget(self._levelSpin, 0, 3)
@@ -127,6 +131,8 @@ class CommanderExpPanel(QWidget):
         """
         self._requirementLabel = QLabel("-", self)
         self._requirementLabel.setStyleSheet("color: #666;")
+        # 需求经验文案较长，允许换行，否则会把整个面板的最小宽度撑到 1000px 以上
+        self._requirementLabel.setWordWrap(True)
         return self._requirementLabel
 
     def _buildButtonLayout(self) -> QHBoxLayout:
@@ -160,8 +166,8 @@ class CommanderExpPanel(QWidget):
             按钮控件。
         """
         button = QPushButton(text, self)
-        button.setMinimumWidth(100)
-        button.setMinimumHeight(35)
+        button.setMinimumWidth(90)
+        button.setMinimumHeight(32)
         return button
 
     def _buildQueryLayout(self) -> QHBoxLayout:
@@ -180,9 +186,9 @@ class CommanderExpPanel(QWidget):
         self._queryBtn = self._makeButton("查询区间")
         self._recentBtn = self._makeButton(f"最近 {COMMANDER_SNAPSHOT_RECENT_LIMIT} 条")
 
-        query.addWidget(QLabel("起始日期:", self))
+        query.addWidget(QLabel("起始:", self))
         query.addWidget(self._startDateEdit)
-        query.addWidget(QLabel("结束日期:", self))
+        query.addWidget(QLabel("结束:", self))
         query.addWidget(self._endDateEdit)
         query.addWidget(self._queryBtn)
         query.addWidget(self._recentBtn)
@@ -206,6 +212,9 @@ class CommanderExpPanel(QWidget):
         edit.setCalendarPopup(True)
         edit.setDisplayFormat(QT_DATE_DISPLAY_FORMAT)
         edit.setDate(value)
+        edit.setMinimumWidth(105)
+        edit.setMaximumWidth(125)
+        edit.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         return edit
 
     def _buildTable(self) -> QTableWidget:
@@ -222,7 +231,7 @@ class CommanderExpPanel(QWidget):
         self._table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SingleSelection)
         self._table.setAlternatingRowColors(True)
-        self._table.setMinimumHeight(240)
+        self._table.setMinimumHeight(200)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self._table.setToolTip("选中一行可编辑该条记录；双击亦可进入编辑")
         return self._table
@@ -511,4 +520,4 @@ class CommanderExpPanel(QWidget):
                 self._table.setItem(row_index, column, item)
 
         self._loading = False
-        self._countLabel.setText(f"共 {len(rows)} 条")
+        self._countLabel.setText(f"{len(rows)} 条")
