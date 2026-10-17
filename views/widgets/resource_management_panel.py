@@ -29,6 +29,7 @@ class ResourceManagementPanel(QWidget):
 
     dataRefreshed = pyqtSignal()
     taskResult = pyqtSignal(object)
+    entryResult = pyqtSignal(object)
 
     def __init__(
         self,
@@ -97,6 +98,7 @@ class ResourceManagementPanel(QWidget):
         """连接信号与槽。"""
         self._taskBoardPanel.dataRefreshed.connect(self._onDataRefreshed)
         self._taskBoardPanel.resultReady.connect(self._onTaskResult)
+        self._taskBoardPanel.entryResult.connect(self.entryResult.emit)
 
     def _onDataRefreshed(self) -> None:
         """子面板数据刷新完成事件处理。"""
@@ -109,3 +111,4 @@ class ResourceManagementPanel(QWidget):
     def refreshData(self) -> None:
         """刷新界面数据。"""
         self._taskBoardPanel.refreshData()
+        self._taskBoardPanel._entry_panel.refreshCategories()

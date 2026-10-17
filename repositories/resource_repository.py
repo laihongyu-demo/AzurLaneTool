@@ -105,6 +105,32 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
         except Exception as e:
             raise DatabaseError(f"查询资源日汇总失败: {e}")
 
+    def findDaily(self, resource_type: str, record_date: str) -> Optional[ResourceDailyModel]:
+        """
+        查询某一天的日汇总行。
+
+        Args:
+            resource_type: 资源类型，``cube`` 或 ``red_gem``。
+            record_date: 日期 ``yyyy-MM-dd``。
+
+        Returns:
+            日汇总模型；该日无记录时返回 None。
+
+        Raises:
+            DatabaseError: 当查询失败时抛出。
+        """
+        sql = f"""
+            SELECT id, resource_type, record_date, detail_mode, income, expense,
+                   balance_override, note, last_record_time, created_at, updated_at
+            FROM {self.DAILY_TABLE}
+            WHERE resource_type = ? AND record_date = ?
+        """
+        try:
+            results = DatabaseConnection.executeQuery(sql, (resource_type, record_date))
+            return ResourceDailyModel.fromDict(results[0]) if results else None
+        except Exception as e:
+            raise DatabaseError(f"查询资源日汇总失败: {e}")
+
     def findLatestDaily(self, resource_type: str) -> Optional[ResourceDailyModel]:
         """
         查询指定资源最后一个有记录的日期。

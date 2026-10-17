@@ -25,6 +25,7 @@ from services.cube_task_service import (
 )
 from utils.constants import QT_DATE_DISPLAY_FORMAT, TASK_GROUP_DAILY, TASK_GROUP_WEEKLY
 from utils.exceptions import DatabaseError, ValidationError
+from views.widgets.regular_entry_panel import RegularEntryPanel
 
 COMPLETED_STYLE = """
 QPushButton {
@@ -161,17 +162,25 @@ class CubeTaskBoardPanel(QWidget):
 
     dataRefreshed = pyqtSignal()
     resultReady = pyqtSignal(object)
+    entryResult = pyqtSignal(object)
 
-    def __init__(self, task_service: Optional[CubeTaskService] = None, parent: QWidget = None):
+    def __init__(
+        self,
+        task_service: Optional[CubeTaskService] = None,
+        entry_panel: Optional[RegularEntryPanel] = None,
+        parent: QWidget = None
+    ):
         """
         初始化任务看板面板。
 
         Args:
             task_service: 任务看板服务实例。
+            entry_panel: 常规录入面板（可注入以便测试）。
             parent: 父控件。
         """
         super().__init__(parent)
         self._task_service = task_service or CubeTaskService()
+        self._entry_panel = entry_panel or RegularEntryPanel()
         self._state_by_code: Dict[str, CubeTaskState] = {}
         self._groups: List[CubeTaskGroupView] = []
         self._current_columns = 0
@@ -246,6 +255,12 @@ class CubeTaskBoardPanel(QWidget):
         """连接信号与槽。"""
         self._refreshBtn.clicked.connect(self._onRefreshClicked)
         self._dateEdit.dateChanged.connect(self._onDateChanged)
+        self._entry_panel.dataRefreshed.connect(self._onEntryDataRefreshed)
+        self._entry_panel.entryRecorded.connect(self.entryResult.emit)
+
+    def _onEntryDataRefreshed(self) -> None:
+        """常规录入写入成功：通知外部刷新看板卡片。"""
+        self.dataRefreshed.emit()
 
     # --------------------------------------------------------------- 事件
 
@@ -466,21 +481,21 @@ class CubeTaskBoardPanel(QWidget):
         构建「常规录入」分组（与任务 / 签到 / 巡游同级）。
 
         Returns:
-            占位分组控件。
+            常规录入分组控件。
         """
         group_box = QGroupBox("常规录入")
         group_box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         layout = QVBoxLayout(group_box)
-        layout.setContentsMargins(10, 14, 10, 14)
+        layout.setContentsMargins(10, 14, 10, 12)
+        layout.setSpacing(6)
 
-        hint = QLabel(
-            "活动建造、特型建造、礼包等非固定收支的手工录入表单将加入本区域"
-            "（规划见 issue #17）。",
-            self,
-        )
+        layout.addStretch()
+        layout.addWidget(self._entry_panel)
+
+        hint = QLabel("补记非固定收支（活动建造、礼包、军事委托等）；方向由类型决定。", self)
         hint.setWordWrap(True)
-        hint.setStyleSheet("color: #888;")
+        hint.setStyleSheet("color: #888; font-size: 12px;")
         layout.addWidget(hint)
         layout.addStretch()
         return group_box
