@@ -74,10 +74,12 @@ RESOURCE_DETAIL_MODE_SUMMARY_ONLY = "summary_only"
 
 # Python strftime 口径（服务层 / 迁移脚本使用）
 RECORD_DATE_FORMAT = "%Y-%m-%d"
+RECORD_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 STATISTICS_DATETIME_FORMAT = "%Y-%m-%d %H:%M"
 
 # Qt 控件口径（QDateEdit / QDateTimeEdit 的 setDisplayFormat 与 fromString 使用）
 QT_DATE_DISPLAY_FORMAT = "yyyy-MM-dd"
+QT_RECORD_TIME_DISPLAY_FORMAT = "yyyy-MM-dd HH:mm:ss"
 QT_DATETIME_DISPLAY_FORMAT = "yyyy-MM-dd HH:mm"
 
 # ---- 指挥官等级 ----

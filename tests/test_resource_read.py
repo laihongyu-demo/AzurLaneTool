@@ -46,7 +46,8 @@ class _StubResourceRepository:
         ]
 
 
-def _summary_day(record_date: str, income: int, expense: int, override=None) -> ResourceDailyModel:
+def _summary_day(record_date: str, income: int, expense: int, override=None,
+                 last_record_time=None) -> ResourceDailyModel:
     """构造汇总日（无明细）。"""
     return ResourceDailyModel(
         resource_type=RESOURCE_TYPE_CUBE,
@@ -55,16 +56,18 @@ def _summary_day(record_date: str, income: int, expense: int, override=None) -> 
         income=income,
         expense=expense,
         balance_override=override,
+        last_record_time=last_record_time,
     )
 
 
-def _detail_day(record_date: str, override=None) -> ResourceDailyModel:
+def _detail_day(record_date: str, override=None, last_record_time=None) -> ResourceDailyModel:
     """构造明细日（收支由明细聚合）。"""
     return ResourceDailyModel(
         resource_type=RESOURCE_TYPE_CUBE,
         record_date=record_date,
         detail_mode=RESOURCE_DETAIL_MODE_DETAIL,
         balance_override=override,
+        last_record_time=last_record_time,
     )
 
 
@@ -166,6 +169,69 @@ class TestResourceCardText(unittest.TestCase):
 
         self.assertEqual(service.getCategories(RESOURCE_TYPE_CUBE, "income"), ["日常任务", "军事委托"])
         self.assertEqual(service.getCategories(RESOURCE_TYPE_CUBE, "expense"), ["轻型建造"])
+
+
+class TestRecordTimeDisplay(unittest.TestCase):
+    """末次记录时刻的透出与展示口径。"""
+
+    def _service(self, daily, totals) -> ResourceService:
+        """构造带时刻数据的服务。"""
+        return ResourceService(_StubResourceRepository(daily=daily, totals=totals))
+
+    def testSeriesExposesLastRecordTime(self):
+        """明细日透出当天最后一笔的准确时刻。"""
+        service = self._service(
+            [_detail_day("2026-10-17")],
+            {"2026-10-17": {"income": 6, "expense": 1, "count": 5,
+                            "last_time": "2026-10-17 21:35:12"}},
+        )
+
+        series = service.getBalanceSeries(RESOURCE_TYPE_CUBE)
+
+        self.assertEqual(series[0]["last_record_time"], "2026-10-17 21:35:12")
+
+    def testSeriesTakesLaterOfDailyAndTransactionTime(self):
+        """日汇总冗余时刻与明细最大时刻取较晚者，避免展示过期时间。"""
+        service = self._service(
+            [_detail_day("2026-10-17", last_record_time="2026-10-17 23:00:00")],
+            {"2026-10-17": {"income": 6, "expense": 1, "count": 5,
+                            "last_time": "2026-10-17 21:35:12"}},
+        )
+
+        self.assertEqual(
+            service.getBalanceSeries(RESOURCE_TYPE_CUBE)[0]["last_record_time"],
+            "2026-10-17 23:00:00",
+        )
+
+    def testTooltipShowsSeconds(self):
+        """tooltip 精确到秒。"""
+        service = self._service(
+            [_detail_day("2026-10-17")],
+            {"2026-10-17": {"income": 6, "expense": 1, "count": 5,
+                            "last_time": "2026-10-17 21:35:12"}},
+        )
+
+        tooltip = service.getCardTooltip(RESOURCE_TYPE_CUBE)
+
+        self.assertIn("2026-10-17 21:35:12", tooltip)
+
+    def testTooltipFallsBackToDateForPlaceholderTime(self):
+        """历史数据只有日期（00:00:00 占位）时只显示日期，不显示 00:00:00。"""
+        service = self._service(
+            [_summary_day("2024-10-15", 8, 1, last_record_time="2024-10-15 00:00:00")],
+            {},
+        )
+
+        tooltip = service.getCardTooltip(RESOURCE_TYPE_CUBE)
+
+        self.assertIn("2024-10-15", tooltip)
+        self.assertNotIn("00:00:00", tooltip)
+
+    def testTooltipFallsBackToDateWithoutAnyTime(self):
+        """完全没有时刻信息时退化为日期。"""
+        service = self._service([_summary_day("2023-08-03", 7, 1)], {})
+
+        self.assertIn("2023-08-03", service.getCardTooltip(RESOURCE_TYPE_CUBE))
 
 
 class TestWriteInterfaceClosed(unittest.TestCase):
