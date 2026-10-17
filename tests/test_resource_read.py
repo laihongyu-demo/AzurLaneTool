@@ -8,7 +8,6 @@
 import unittest
 
 from models.resource_model import ResourceCategoryModel, ResourceDailyModel
-from repositories.resource_repository import ResourceRepository
 from services.resource_service import ResourceService
 from utils.constants import (
     RESOURCE_DETAIL_MODE_DETAIL, RESOURCE_DETAIL_MODE_SUMMARY_ONLY, RESOURCE_TYPE_CUBE,
@@ -234,20 +233,11 @@ class TestRecordTimeDisplay(unittest.TestCase):
         self.assertIn("2023-08-03", service.getCardTooltip(RESOURCE_TYPE_CUBE))
 
 
-class TestWriteInterfaceClosed(unittest.TestCase):
-    """本阶段必须不提供写入接口（需求文档 AC-09）。"""
+class TestWriteBoundary(unittest.TestCase):
+    """写入口的边界：资源统计服务保持只读，写入由任务看板服务编排。"""
 
-    def testRepositoryWriteMethodsRaise(self):
-        """Repository 的增删改一律拒绝，提示指向 #17。"""
-        repository = ResourceRepository()
-
-        for method_name in ("insert", "update", "delete"):
-            with self.assertRaises(NotImplementedError) as ctx:
-                getattr(repository, method_name)(None)
-            self.assertIn("#17", str(ctx.exception))
-
-    def testServiceHasNoWriteMethods(self):
-        """服务层不暴露任何写方法。"""
+    def testServiceKeepsReadOnly(self):
+        """资源统计服务本身不暴露写方法。"""
         forbidden = [name for name in dir(ResourceService) if name.startswith(
             ("add", "update", "delete", "set", "insert")
         )]

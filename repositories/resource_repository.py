@@ -1,13 +1,14 @@
 """
 资源统计数据访问层模块。
 
-封装魔方 / 红尖尖的日汇总、明细与事件字典的读取操作。
+封装魔方 / 红尖尖的日汇总、明细与事件字典的读写操作。
 
-本阶段（需求文档 v0.2）只提供读接口：魔方 / 红尖尖的录入与编辑推迟到 #17，
-写入路径不存在，避免出现绕过一致性维护的入口。数据由迁移脚本一次性写入。
+写入能力目前只由「魔方任务看板」使用（完成 / 取消任务时增删明细并维护日汇总）；
+#17 的通用手工录入上线后可直接复用同一套方法。
 """
 
-from typing import Any, Dict, List, Optional
+import sqlite3
+from typing import Any, Dict, List, Optional, Set
 
 from models.resource_model import (
     ResourceCategoryModel, ResourceDailyModel, ResourceTransactionModel
@@ -19,7 +20,7 @@ from utils.exceptions import DatabaseError
 
 class ResourceRepository(BaseRepository[ResourceDailyModel]):
     """
-    资源统计数据访问类（只读）。
+    资源统计数据访问类。
 
     日汇总与明细分别对应 ``resource_daily`` / ``resource_transaction``，
     事件字典对应 ``resource_category``。
@@ -291,27 +292,279 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
 
     def insert(self, record: ResourceDailyModel) -> int:
         """
-        写入接口在本阶段不提供。
+        插入一条日汇总行。
+
+        Args:
+            record: 日汇总模型实例。
+
+        Returns:
+            新记录的 ID。
 
         Raises:
-            NotImplementedError: 始终抛出；写入需与明细、日汇总一致性维护一起实现（#17）。
+            DatabaseError: 当插入失败时抛出。
         """
-        raise NotImplementedError("资源统计写入接口尚未开放，见 issue #17")
+        sql = f"""
+            INSERT INTO {self.DAILY_TABLE}
+                (resource_type, record_date, detail_mode, income, expense,
+                 balance_override, note, last_record_time)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            record.resource_type, record.record_date, record.detail_mode,
+            record.income, record.expense, record.balance_override,
+            record.note, record.last_record_time,
+        )
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql, params)
+                return cursor.lastrowid
+        except sqlite3.Error as e:
+            raise DatabaseError(f"插入资源日汇总失败: {e}")
 
     def update(self, record: ResourceDailyModel) -> bool:
         """
-        写入接口在本阶段不提供。
+        更新一条日汇总行。
+
+        Args:
+            record: 日汇总模型实例，必须带有效 ID。
+
+        Returns:
+            更新是否成功。
 
         Raises:
-            NotImplementedError: 始终抛出；写入需与明细、日汇总一致性维护一起实现（#17）。
+            DatabaseError: 当更新失败或缺少 ID 时抛出。
         """
-        raise NotImplementedError("资源统计写入接口尚未开放，见 issue #17")
+        if record.id is None:
+            raise DatabaseError("更新资源日汇总需要有效的 ID")
+
+        sql = f"""
+            UPDATE {self.DAILY_TABLE}
+               SET detail_mode = ?, income = ?, expense = ?, balance_override = ?,
+                   note = ?, last_record_time = ?, updated_at = datetime('now', 'localtime')
+             WHERE id = ?
+        """
+        params = (
+            record.detail_mode, record.income, record.expense, record.balance_override,
+            record.note, record.last_record_time, record.id,
+        )
+        try:
+            rowcount = DatabaseConnection.executeUpdate(sql, params)
+            return rowcount > 0
+        except Exception as e:
+            raise DatabaseError(f"更新资源日汇总失败: {e}")
 
     def delete(self, record_id: int) -> bool:
         """
-        写入接口在本阶段不提供。
+        删除一条日汇总行。
+
+        Args:
+            record_id: 记录 ID。
+
+        Returns:
+            删除是否成功。
 
         Raises:
-            NotImplementedError: 始终抛出；写入需与明细、日汇总一致性维护一起实现（#17）。
+            DatabaseError: 当删除失败时抛出。
         """
-        raise NotImplementedError("资源统计写入接口尚未开放，见 issue #17")
+        sql = f"DELETE FROM {self.DAILY_TABLE} WHERE id = ?"
+        try:
+            rowcount = DatabaseConnection.executeUpdate(sql, (record_id,))
+            return rowcount > 0
+        except Exception as e:
+            raise DatabaseError(f"删除资源日汇总失败: {e}")
+
+    # ---------------------------------------------------------------- 明细写入
+
+    def insertTransaction(
+        self, record: ResourceTransactionModel, conn: Optional[sqlite3.Connection] = None
+    ) -> int:
+        """
+        插入一条明细。
+
+        Args:
+            record: 明细模型实例。
+            conn: 可选的调用方连接（用于把多条写入合并进同一事务）；
+                为空时自行开连接并提交。
+
+        Returns:
+            新记录的 ID。
+
+        Raises:
+            DatabaseError: 当插入失败时抛出。
+        """
+        sql = f"""
+            INSERT INTO {self.TRANSACTION_TABLE}
+                (resource_type, direction, record_time, category, amount, note)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            record.resource_type, record.direction, record.record_time,
+            record.category, record.amount, record.note,
+        )
+        try:
+            if conn is not None:
+                return conn.execute(sql, params).lastrowid
+            with self._getConnection() as own:
+                return own.execute(sql, params).lastrowid
+        except sqlite3.Error as e:
+            raise DatabaseError(f"插入资源明细失败: {e}")
+
+    def deleteTransaction(
+        self, record_id: int, conn: Optional[sqlite3.Connection] = None
+    ) -> bool:
+        """
+        删除一条明细。
+
+        Args:
+            record_id: 明细 ID。
+            conn: 可选的调用方连接。
+
+        Returns:
+            删除是否成功。
+
+        Raises:
+            DatabaseError: 当删除失败时抛出。
+        """
+        sql = f"DELETE FROM {self.TRANSACTION_TABLE} WHERE id = ?"
+        try:
+            if conn is not None:
+                return conn.execute(sql, (record_id,)).rowcount > 0
+            return DatabaseConnection.executeUpdate(sql, (record_id,)) > 0
+        except sqlite3.Error as e:
+            raise DatabaseError(f"删除资源明细失败: {e}")
+
+    def findTransactionById(self, record_id: int) -> Optional[ResourceTransactionModel]:
+        """
+        根据 ID 查询明细。
+
+        Args:
+            record_id: 明细 ID。
+
+        Returns:
+            明细模型实例；不存在则返回 None。
+
+        Raises:
+            DatabaseError: 当查询失败时抛出。
+        """
+        sql = f"""
+            SELECT id, resource_type, direction, record_time, category, amount,
+                   note, created_at, updated_at
+            FROM {self.TRANSACTION_TABLE}
+            WHERE id = ?
+        """
+        try:
+            results = DatabaseConnection.executeQuery(sql, (record_id,))
+            if results:
+                return ResourceTransactionModel.fromDict(results[0])
+            return None
+        except Exception as e:
+            raise DatabaseError(f"查询资源明细失败: {e}")
+
+    def findExistingTransactionIds(self, record_ids: List[int]) -> Set[int]:
+        """
+        批量校验明细 ID 是否仍然存在（用于识别孤儿完成记录）。
+
+        Args:
+            record_ids: 待检查的明细 ID 列表。
+
+        Returns:
+            仍然存在的 ID 集合。
+        """
+        ids = [int(value) for value in record_ids if value is not None]
+        if not ids:
+            return set()
+
+        placeholders = ", ".join("?" for _ in ids)
+        sql = f"SELECT id FROM {self.TRANSACTION_TABLE} WHERE id IN ({placeholders})"
+        try:
+            results = DatabaseConnection.executeQuery(sql, tuple(ids))
+            return {row["id"] for row in results}
+        except Exception as e:
+            raise DatabaseError(f"校验资源明细是否存在失败: {e}")
+
+    def upsertDetailDaily(
+        self,
+        resource_type: str,
+        record_date: str,
+        record_time: Optional[str] = None,
+        conn: Optional[sqlite3.Connection] = None,
+    ) -> None:
+        """
+        确保某日是「明细日」，并把 `last_record_time` 更新为较晚者。
+
+        若该日原本是汇总日（历史段），会被切换为明细日并清空 stored 收支 —— 该场景
+        只会在把任务记到很早的历史日期时发生，调用方需自行确认。
+
+        Args:
+            resource_type: 资源类型。
+            record_date: 日期 ``yyyy-MM-dd``。
+            record_time: 可选的最新时刻 ``yyyy-MM-dd HH:mm:ss``。
+            conn: 可选的调用方连接。
+
+        Raises:
+            DatabaseError: 当写入失败时抛出。
+        """
+        sql = f"""
+            INSERT INTO {self.DAILY_TABLE}
+                (resource_type, record_date, detail_mode, income, expense, note, last_record_time)
+            VALUES (?, ?, 'detail', NULL, NULL, '', ?)
+            ON CONFLICT(resource_type, record_date) DO UPDATE SET
+                detail_mode = 'detail',
+                income = NULL,
+                expense = NULL,
+                last_record_time = CASE
+                    WHEN excluded.last_record_time IS NULL
+                        THEN {self.DAILY_TABLE}.last_record_time
+                    WHEN {self.DAILY_TABLE}.last_record_time IS NULL
+                        THEN excluded.last_record_time
+                    WHEN excluded.last_record_time > {self.DAILY_TABLE}.last_record_time
+                        THEN excluded.last_record_time
+                    ELSE {self.DAILY_TABLE}.last_record_time
+                END,
+                updated_at = datetime('now', 'localtime')
+        """
+        params = (resource_type, record_date, record_time)
+        try:
+            if conn is not None:
+                conn.execute(sql, params)
+                return
+            with self._getConnection() as own:
+                own.execute(sql, params)
+        except sqlite3.Error as e:
+            raise DatabaseError(f"维护资源日汇总失败: {e}")
+
+    def recomputeLastRecordTime(
+        self,
+        resource_type: str,
+        record_date: str,
+        conn: Optional[sqlite3.Connection] = None,
+    ) -> None:
+        """
+        按该日剩余明细重算 `last_record_time`（无明细则置 NULL）。
+
+        Args:
+            resource_type: 资源类型。
+            record_date: 日期 ``yyyy-MM-dd``。
+            conn: 可选的调用方连接。
+
+        Raises:
+            DatabaseError: 当写入失败时抛出。
+        """
+        sql = f"""
+            UPDATE {self.DAILY_TABLE}
+               SET last_record_time = (
+                       SELECT MAX(t.record_time) FROM {self.TRANSACTION_TABLE} t
+                        WHERE t.resource_type = ? AND substr(t.record_time, 1, 10) = ?
+                   ),
+                   updated_at = datetime('now', 'localtime')
+             WHERE resource_type = ? AND record_date = ?
+        """
+        params = (resource_type, record_date, resource_type, record_date)
+        try:
+            if conn is not None:
+                conn.execute(sql, params)
+                return
+            with self._getConnection() as own:
+                own.execute(sql, params)
+        except sqlite3.Error as e:
+            raise DatabaseError(f"重算资源末次记录时刻失败: {e}")

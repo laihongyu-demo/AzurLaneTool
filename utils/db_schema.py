@@ -1,7 +1,7 @@
 """
 数据库表结构引导模块。
 
-负责在应用启动时确保资源统计相关表存在（幂等 DDL），并把早期版本的表结构
+负责在应用启动时确保资源统计 / 魔方任务看板相关表存在（幂等 DDL），并把早期版本的表结构
 就地升级到当前口径（明细精确到秒），同时提供"表 / 列不存在"异常的识别辅助。
 """
 
@@ -12,6 +12,7 @@ from utils.db_connection import DatabaseConnection, DatabaseContext
 from utils.sql_loader import loadSqlFile
 
 RESOURCE_SCHEMA_FILE = "CreateResourceStatisticsTables.sql"
+CUBE_TASK_SCHEMA_FILE = "CreateCubeTaskTables.sql"
 
 # 仅日期（yyyy-MM-dd）的写法长度；用于识别需要补时分秒的旧值
 LEGACY_DATE_LENGTH = 10
@@ -19,10 +20,10 @@ LEGACY_DATE_LENGTH = 10
 
 def ensureResourceStatisticsSchema(db_path: Optional[str] = None) -> None:
     """
-    确保资源统计相关表与索引存在，并把旧结构升级到当前口径。
+    确保资源统计与魔方任务看板相关表、索引与任务定义就位，并把旧结构升级到当前口径。
 
-    执行 ``sql/CreateResourceStatisticsTables.sql``（全部 ``IF NOT EXISTS``），
-    随后运行幂等升级步骤：
+    执行 ``sql/CreateResourceStatisticsTables.sql`` 与 ``sql/CreateCubeTaskTables.sql``
+    （全部 ``IF NOT EXISTS``，任务定义用 ``ON CONFLICT DO UPDATE``），随后运行幂等升级步骤：
 
     - 明细的 ``record_date``（仅日期）→ ``record_time``（``yyyy-MM-dd HH:mm:ss``）
     - 日汇总补齐 ``last_record_time``（该日最后一笔的准确时刻）
@@ -36,12 +37,14 @@ def ensureResourceStatisticsSchema(db_path: Optional[str] = None) -> None:
     Raises:
         DatabaseError: 当 SQL 文件缺失或执行失败时抛出。
     """
-    sql = loadSqlFile(RESOURCE_SCHEMA_FILE)
+    resource_sql = loadSqlFile(RESOURCE_SCHEMA_FILE)
+    task_sql = loadSqlFile(CUBE_TASK_SCHEMA_FILE)
     path = db_path or DatabaseConnection.getDbPath()
     with DatabaseContext(path) as conn:
         # 先升级旧结构：表不存在时各步骤自动跳过，不会误建/误改
         _upgradeLegacySchema(conn)
-        conn.executescript(sql)
+        conn.executescript(resource_sql)
+        conn.executescript(task_sql)
         _backfillLastRecordTime(conn)
 
 
