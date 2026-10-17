@@ -14,13 +14,15 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt5.QtWidgets import QApplication, QMessageBox  # noqa: E402
+from PyQt5.QtWidgets import QApplication, QMessageBox, QScrollArea  # noqa: E402
 
 from services.commander_service import CommanderService  # noqa: E402
+from services.cube_task_service import CubeTaskService  # noqa: E402
 from services.resource_service import ResourceService  # noqa: E402
 from utils.db_connection import DatabaseConnection  # noqa: E402
 from utils.db_schema import ensureResourceStatisticsSchema  # noqa: E402
 from utils.exceptions import DatabaseError  # noqa: E402
+from views.dialogs.commander_exp_dialog import CommanderExpDialog  # noqa: E402
 from views.widgets.commander_exp_panel import CommanderExpPanel  # noqa: E402
 from views.widgets.resource_management_panel import ResourceManagementPanel  # noqa: E402
 from views.widgets.statistics_panel import StatisticsPanel  # noqa: E402
@@ -89,6 +91,8 @@ class _TempDatabaseCase(unittest.TestCase):
         finally:
             conn.close()
         DatabaseConnection.setDbPath(self._db_path)
+        # 资源 / 任务看板表（幂等建表，不影响上面缺失表降级的用例）
+        ensureResourceStatisticsSchema(self._db_path)
 
 
 class TestCommanderExpPanel(_TempDatabaseCase):
@@ -196,19 +200,28 @@ class TestCommanderExpPanel(_TempDatabaseCase):
 
 
 class TestResourceManagementPanel(_TempDatabaseCase):
-    """页签容器测试。"""
+    """页签容器测试（指级经验已迁出，仅保留任务看板 + 预留区）。"""
 
-    def testContainerRelaysRefreshAndSignals(self):
+    def testContainerHostsTaskBoardOnly(self):
+        """容器承载任务看板与预留分组，不再内嵌指级经验面板。"""
+        self._createDatabase()
+        panel = ResourceManagementPanel(CubeTaskService())
+
+        self.assertTrue(hasattr(panel, "_taskBoardPanel"))
+        self.assertFalse(hasattr(panel, "_commanderPanel"))
+        self.assertIsNotNone(panel.findChild(QScrollArea))
+
+    def testContainerRelaysRefresh(self):
         """容器刷新子面板并转发 dataRefreshed。"""
         self._createDatabase()
-        panel = ResourceManagementPanel(CommanderService())
+        panel = ResourceManagementPanel(CubeTaskService())
         received = []
         panel.dataRefreshed.connect(lambda: received.append(True))
 
         panel.refreshData()
-        panel._commanderPanel.dataRefreshed.emit()
+        panel._taskBoardPanel.dataRefreshed.emit()
 
-        self.assertEqual(panel._commanderPanel._table.rowCount(), 2)
+        self.assertEqual(len(panel._taskBoardPanel._state_by_code), 18)
         self.assertEqual(received, [True])
 
 
@@ -323,6 +336,57 @@ class TestStatisticsCardWiring(unittest.TestCase):
         self.assertEqual(panel._cubeCard.value(), "错误")
         self.assertEqual(panel._redGemCard.value(), "错误")
         self.assertEqual(panel._expEfficiencyCard.value(), "错误")
+
+
+class TestCommanderExpDialog(_TempDatabaseCase):
+    """指级经验独立窗口测试。"""
+
+    def testDialogHostsPanel(self):
+        """窗口内嵌指级经验面板，标题正确。"""
+        self._createDatabase()
+
+        dialog = CommanderExpDialog(CommanderService())
+
+        self.assertEqual(dialog.windowTitle(), "指级经验")
+        self.assertEqual(dialog._panel._table.rowCount(), 2)
+        self.assertFalse(dialog.isModal())
+
+    def testCardClickOpensDialog(self):
+        """点击指挥官等级卡片打开窗口（非模态），再次点击复用同一实例。"""
+        self._createDatabase()
+        panel = StatisticsPanel(
+            statistics_service=_StubStatisticsService(),
+            user_service=_StubUserService(),
+            commander_service=CommanderService(),
+            resource_service=_StubResourceService(),
+        )
+
+        self.assertIsNone(panel._commanderDialog)
+        panel._onCommanderLevelClicked()
+        first = panel._commanderDialog
+        self.assertIsNotNone(first)
+        self.assertTrue(first.isVisible())
+
+        panel._onCommanderLevelClicked()
+        self.assertIs(panel._commanderDialog, first)
+
+        first.close()
+
+    def testDialogRefreshUpdatesCard(self):
+        """窗口内数据变化会刷新看板卡片。"""
+        self._createDatabase()
+        panel = StatisticsPanel(
+            statistics_service=_StubStatisticsService(),
+            user_service=_StubUserService(),
+            commander_service=CommanderService(),
+            resource_service=_StubResourceService(),
+        )
+        panel._onCommanderLevelClicked()
+
+        panel._commanderDialog.dataRefreshed.emit()
+
+        self.assertEqual(panel._commanderLevelCard.value(), "163（77,057/354,350）")
+        panel._commanderDialog.close()
 
 
 if __name__ == "__main__":

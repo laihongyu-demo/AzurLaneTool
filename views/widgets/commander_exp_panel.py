@@ -94,10 +94,9 @@ class CommanderExpPanel(QWidget):
         self._timeEdit.setCalendarPopup(True)
         self._timeEdit.setDateTime(QDateTime.currentDateTime())
         self._timeEdit.setMinimumWidth(150)
-        # 限定最大宽度并忽略 sizeHint：QDateTimeEdit 的 minimumSizeHint 约 300px，
-        # 不处理会把整行撑到 750px+，在 800 宽窗口下出现横向滚动条
-        self._timeEdit.setMaximumWidth(175)
-        self._timeEdit.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        # 限定宽度：QDateTimeEdit 的 minimumSizeHint 约 300px，不封顶会把整行撑到 750px+。
+        # 注意不能用 QSizePolicy.Ignored——布局会把列宽压到比控件还窄，控件就会互相重叠。
+        self._timeEdit.setMaximumWidth(180)
 
         self._levelSpin = QSpinBox(self)
         self._levelSpin.setRange(COMMANDER_LEVEL_MIN, COMMANDER_LEVEL_MAX)
@@ -214,7 +213,6 @@ class CommanderExpPanel(QWidget):
         edit.setDate(value)
         edit.setMinimumWidth(105)
         edit.setMaximumWidth(125)
-        edit.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         return edit
 
     def _buildTable(self) -> QTableWidget:

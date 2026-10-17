@@ -17,6 +17,7 @@ from services.user_service import UserService
 from services.commander_service import CommanderService
 from services.resource_service import ResourceService
 from services.mental_calculation_service import MentalCalculationService, MentalCalculationResult
+from views.dialogs.commander_exp_dialog import CommanderExpDialog
 from views.widgets.stat_card import StatCard
 from utils.constants import RESOURCE_TYPE_CUBE, RESOURCE_TYPE_RED_GEM
 from utils.exceptions import DatabaseError
@@ -31,6 +32,7 @@ class StatisticsPanel(QWidget):
     """
 
     dataRefreshed = pyqtSignal()
+    commanderResult = pyqtSignal(object)
 
     def __init__(
         self,
@@ -58,6 +60,7 @@ class StatisticsPanel(QWidget):
         self._mental_calculation_service = mental_calculation_service or MentalCalculationService()
         self._commander_service = commander_service or CommanderService()
         self._resource_service = resource_service or ResourceService()
+        self._commanderDialog = None
         self._initUi()
         self._connectSignals()
         self.refreshData()
@@ -202,16 +205,33 @@ class StatisticsPanel(QWidget):
 
     def _onCommanderLevelClicked(self) -> None:
         """
-        指挥官等级卡片点击事件处理。
+        指挥官等级卡片点击事件处理：打开「指级经验」独立窗口。
 
-        TODO: 后续实现指挥官等级详细信息的业务逻辑
+        窗口非模态，打开期间仍可操作主界面；窗口内的增删改会即时刷新本卡片。
         """
-        QMessageBox.information(
-            self,
-            "提示",
-            "开发中",
-            QMessageBox.Ok
-        )
+        if self._commanderDialog is None:
+            self._commanderDialog = CommanderExpDialog(self._commander_service, self)
+            self._commanderDialog.dataRefreshed.connect(self._onCommanderDialogDataChanged)
+            self._commanderDialog.snapshotResult.connect(self.commanderResult.emit)
+            self._commanderDialog.finished.connect(self._onCommanderDialogFinished)
+
+        self._commanderDialog.show()
+        self._commanderDialog.raise_()
+        self._commanderDialog.activateWindow()
+
+    def _onCommanderDialogDataChanged(self) -> None:
+        """指级经验窗口内数据变化：刷新卡片并通知外部。"""
+        self.updateCommanderStats()
+        self.dataRefreshed.emit()
+
+    def _onCommanderDialogFinished(self, _result: int) -> None:
+        """
+        指级经验窗口关闭后刷新卡片。
+
+        Args:
+            _result: 对话框返回码（未使用）。
+        """
+        self.updateCommanderStats()
 
     def _onCubeClicked(self) -> None:
         """

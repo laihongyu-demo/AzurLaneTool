@@ -132,7 +132,6 @@ class MainWindow(QMainWindow):
         self._tabWidget.addTab(self._shipManagementPanel, "舰娘管理")
 
         self._resourceManagementPanel = ResourceManagementPanel(
-            commander_service=self._commander_service,
             cube_task_service=self._cube_task_service
         )
         self._tabWidget.addTab(self._resourceManagementPanel, "资源统计")
@@ -173,13 +172,13 @@ class MainWindow(QMainWindow):
         """连接信号与槽。"""
         self._shipManagementPanel.dataRefreshed.connect(self._onShipManagementDataRefreshed)
         self._statisticsPanel.dataRefreshed.connect(self._onStatisticsDataRefreshed)
+        self._statisticsPanel.commanderResult.connect(self._onCommanderSnapshotResult)
         self._shipManagementPanel.unlockResult.connect(self._onUnlockResult)
         self._shipManagementPanel.shipCreateResult.connect(self._onShipCreateResult)
         self._shipManagementPanel.awakenResult.connect(self._onAwakenResult)
         self._shipManagementPanel.limitBreakResult.connect(self._onLimitBreakResult)
         self._shipManagementPanel.oathResult.connect(self._onOathResult)
         self._resourceManagementPanel.dataRefreshed.connect(self._onResourceDataRefreshed)
-        self._resourceManagementPanel.snapshotResult.connect(self._onCommanderSnapshotResult)
         self._resourceManagementPanel.taskResult.connect(self._onCubeTaskResult)
 
     def _onRefreshClicked(self) -> None:
