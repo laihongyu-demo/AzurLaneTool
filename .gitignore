@@ -41,3 +41,4 @@ env/
 
 # DSH 插件开发目录（Harness 插件源码，本机开发用，不属于本项目）
 dsh-plugins/
+.dsh/
