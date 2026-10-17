@@ -9,10 +9,11 @@ import os
 
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QIcon
 
 from views.main_window import MainWindow
 from services.codex_unlock_service import CodexUnlockService
-from utils.constants import APP_NAME, DEFAULT_DB_PATH
+from utils.constants import APP_NAME, APP_ICON_PATH, DEFAULT_DB_PATH
 
 
 def main() -> int:
@@ -29,6 +30,7 @@ def main() -> int:
 
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    app.setWindowIcon(QIcon(APP_ICON_PATH))
 
     if not os.path.exists(DEFAULT_DB_PATH):
         print(f"警告: 数据库文件不存在: {DEFAULT_DB_PATH}")

@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import (
     QAction, QMessageBox, QTabWidget
 )
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QIcon
 
 from services.data_service import DataService
 from services.calc_service import CalcService
@@ -22,7 +23,9 @@ from services.statistics_service import StatisticsService
 from services.mental_calculation_service import MentalCalculationService, MentalCalculationResult
 from views.widgets.statistics_panel import StatisticsPanel
 from views.widgets.ship_management_panel import ShipManagementPanel
-from utils.constants import WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT, APP_NAME
+from utils.constants import (
+    WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT, APP_NAME, APP_ICON_PATH
+)
 
 
 class MainWindow(QMainWindow):
@@ -77,6 +80,7 @@ class MainWindow(QMainWindow):
     def _initUi(self) -> None:
         """初始化用户界面。"""
         self.setWindowTitle(APP_NAME)
+        self.setWindowIcon(QIcon(APP_ICON_PATH))
         self.setMinimumSize(800, 600)
         self.resize(WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT)
 

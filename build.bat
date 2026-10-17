@@ -1,9 +1,9 @@
 @echo off
-REM DataInsight 构建脚本
+REM AzurLaneTool 构建脚本
 REM 用于打包 Windows 可执行文件
 
 echo ========================================
-echo DataInsight Build Script
+echo AzurLaneTool Build Script
 echo ========================================
 
 echo.
@@ -21,6 +21,6 @@ pyinstaller build.spec --clean
 echo.
 echo ========================================
 echo Build completed!
-echo Output: dist\DataInsight.exe
+echo Output: dist\AzurLaneTool.exe
 echo ========================================
 pause

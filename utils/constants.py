@@ -5,13 +5,36 @@
 """
 
 import os
+import sys
 
-APP_NAME = "DataInsight"
+APP_NAME = "AzurLaneTool"
 APP_VERSION = "1.0.0"
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def _resolveBaseDir() -> str:
+    """
+    解析项目根目录。
+
+    兼容源码运行与 PyInstaller 打包后运行两种环境。
+
+    Returns:
+        项目根目录（打包后为资源解压目录）的绝对路径。
+    """
+    if getattr(sys, 'frozen', False):
+        return getattr(
+            sys,
+            '_MEIPASS',
+            os.path.dirname(os.path.abspath(sys.executable))
+        )
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+BASE_DIR = _resolveBaseDir()
 SQL_DIR = os.path.join(BASE_DIR, 'sql')
 DATA_DIR = os.path.join(BASE_DIR, 'data')
+ASSETS_DIR = os.path.join(BASE_DIR, 'assets')
+ICON_DIR = os.path.join(ASSETS_DIR, 'icon')
+APP_ICON_PATH = os.path.join(ICON_DIR, '250px-Manjuu_logo1.ico')
 
 DEFAULT_DB_NAME = "AzurLaneStatisticalOfficeDB.db"
 DEFAULT_DB_PATH = os.path.join(DATA_DIR, DEFAULT_DB_NAME)
