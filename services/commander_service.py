@@ -8,13 +8,14 @@
 """
 
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Dict, List, Optional
+from datetime import date, datetime, timedelta
+from typing import Dict, List, Optional, Tuple
 
 from models.commander_model import CommanderLevelExpModel, CommanderSnapshotModel
 from repositories.commander_repository import CommanderRepository
 from utils.constants import (
     COMMANDER_LEVEL_MAX, COMMANDER_LEVEL_MIN, COMMANDER_SNAPSHOT_RECENT_LIMIT,
+    EXP_EFFICIENCY_MIN_SAMPLES, EXP_EFFICIENCY_UNIT, EXP_EFFICIENCY_WINDOW_DAYS,
     STATISTICS_DATETIME_FORMAT,
 )
 from utils.db_schema import isMissingColumnError, isMissingTableError
@@ -69,6 +70,35 @@ class CommanderLevelOverview:
     remaining_exp: Optional[int] = None
     progress_rate: Optional[float] = None
     snapshot_date: str = ""
+
+
+@dataclass
+class ExpEfficiency:
+    """
+    指级效率计算结果（#16）。
+
+    口径：最近 `EXP_EFFICIENCY_WINDOW_DAYS` 天内的「绝对经验差 ÷ 实际跨度」。
+    右端点取**最新快照**而非今天，避免"很久没记录"被当成"没肝"。
+
+    Attributes:
+        rate_per_day: 日均经验；降级时为 None。
+        start_time: 区间起点快照时刻（``yyyy-MM-dd HH:mm``）。
+        end_time: 区间终点（最新快照）时刻。
+        span_days: 实际跨度（天，含小数）。
+        sample_count: 区间内去重后的快照条数。
+        cumulative_rate: 全程日均（首条到末条），供 tooltip 对照；样本不足时为 None。
+        skipped: 因等级无法换算而被跳过的快照条数。
+        degraded_reason: 降级原因；正常时为 None。
+    """
+
+    rate_per_day: Optional[int] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    span_days: Optional[float] = None
+    sample_count: int = 0
+    cumulative_rate: Optional[int] = None
+    skipped: int = 0
+    degraded_reason: Optional[str] = None
 
 
 class CommanderService:
@@ -368,6 +398,193 @@ class CommanderService:
         if overview.progress_rate is not None:
             parts.append(f"进度 {overview.progress_rate:.1f}%")
         parts.append(f"记录于 {latest.statistics_date}")
+        return "｜".join(parts)
+
+    # ----------------------------------------------------- 指级效率（#16）
+
+    def getAbsoluteExp(self, level: int, current_exp: int) -> Optional[int]:
+        """
+        把「等级 + 本级已累积经验」换算为从 1 级起的绝对经验。
+
+        公式：`absolute(1) = exp`，`absolute(L) = cumulative_exp(L-1) + exp`。
+        满级（`COMMANDER_LEVEL_MAX`）只用到 `cumulative_exp(L-1)`，不会触碰基准表里
+        200 级的 NULL 行；等级越界或基准缺失时返回 None（该快照不参与计算）。
+
+        Args:
+            level: 指挥官等级。
+            current_exp: 本级已累积经验。
+
+        Returns:
+            绝对经验；无法换算时返回 None。
+        """
+        if level < COMMANDER_LEVEL_MIN or level > COMMANDER_LEVEL_MAX:
+            return None
+        if level == COMMANDER_LEVEL_MIN:
+            return current_exp
+
+        requirement = self.getLevelRequirement(level - 1)
+        if requirement is None or requirement.cumulative_exp is None:
+            return None
+        return int(requirement.cumulative_exp) + current_exp
+
+    def getExpEfficiency(self) -> ExpEfficiency:
+        """
+        计算指级效率（近 30 天日均）。
+
+        口径见 `docs/指级效率算法方案_20261018.md`：
+        窗口右端点取最新快照（不是今天），起点取窗口边界之前最近的一条快照；
+        若全部历史都落在窗口内，则直接使用最早的一条（跨度会小于窗口）。
+
+        Returns:
+            计算结果；数据不足或异常时 `rate_per_day` 为 None 并给出 `degraded_reason`。
+        """
+        points, skipped = self._collectAbsolutePoints()
+
+        if not points:
+            return ExpEfficiency(
+                skipped=skipped,
+                degraded_reason="暂无快照，请先录入指挥官等级",
+            )
+        if len(points) < EXP_EFFICIENCY_MIN_SAMPLES:
+            return ExpEfficiency(
+                sample_count=len(points),
+                skipped=skipped,
+                degraded_reason=f"至少需要两条可换算的快照（当前 {len(points)} 条）",
+            )
+
+        end_time, end_absolute = points[-1]
+        cutoff = end_time - timedelta(days=EXP_EFFICIENCY_WINDOW_DAYS)
+
+        start: Optional[Tuple[datetime, int]] = None
+        for moment, absolute in points:
+            if moment <= cutoff:
+                start = (moment, absolute)
+            else:
+                break
+
+        if start is None:
+            # 全部历史都在窗口内：用最早的一条，跨度自然小于窗口
+            start = points[0]
+
+        start_time, start_absolute = start
+        span_days = (end_time - start_time).total_seconds() / 86400
+        if span_days <= 0:
+            return ExpEfficiency(
+                start_time=start_time.strftime(STATISTICS_DATETIME_FORMAT),
+                end_time=end_time.strftime(STATISTICS_DATETIME_FORMAT),
+                span_days=span_days,
+                sample_count=len(points),
+                skipped=skipped,
+                degraded_reason="区间跨度不足一天",
+            )
+
+        delta = end_absolute - start_absolute
+        if delta < 0:
+            return ExpEfficiency(
+                start_time=start_time.strftime(STATISTICS_DATETIME_FORMAT),
+                end_time=end_time.strftime(STATISTICS_DATETIME_FORMAT),
+                span_days=span_days,
+                sample_count=len(points),
+                skipped=skipped,
+                degraded_reason="最近快照的绝对经验低于区间起点，疑似录入错误",
+            )
+
+        sample_count = sum(1 for moment, _ in points if start_time <= moment <= end_time)
+        return ExpEfficiency(
+            rate_per_day=int(round(delta / span_days)),
+            start_time=start_time.strftime(STATISTICS_DATETIME_FORMAT),
+            end_time=end_time.strftime(STATISTICS_DATETIME_FORMAT),
+            span_days=span_days,
+            sample_count=sample_count,
+            cumulative_rate=self._buildCumulativeRate(points[0], points[-1]),
+            skipped=skipped,
+        )
+
+    def _collectAbsolutePoints(self) -> Tuple[List[Tuple[datetime, int]], int]:
+        """
+        读取全部快照、换算绝对经验并按天去重。
+
+        Returns:
+            (按时间升序且同日去重的 (时刻, 绝对经验) 列表, 被跳过的快照条数)。
+        """
+        points: List[Tuple[datetime, int]] = []
+        skipped = 0
+        try:
+            snapshots = self._commander_repository.findAll()
+        except DatabaseError as e:
+            # 旧库 / 空库没有指挥官表：按"无快照"降级，不让整块看板报错
+            if isMissingTableError(e) or isMissingColumnError(e):
+                return [], 0
+            raise
+
+        for snapshot in reversed(snapshots):
+            absolute = self.getAbsoluteExp(snapshot.commander_level, snapshot.commander_exp)
+            if absolute is None:
+                skipped += 1
+                continue
+            moment = datetime.strptime(snapshot.statistics_date, STATISTICS_DATETIME_FORMAT)
+            points.append((moment, absolute))
+
+        # 同一天只保留最后一条：最后一条的绝对经验已包含当天更早记录的全部增量
+        by_day: Dict[date, Tuple[datetime, int]] = {}
+        for moment, absolute in points:
+            by_day[moment.date()] = (moment, absolute)
+        return [by_day[day] for day in sorted(by_day)], skipped
+
+    @staticmethod
+    def _buildCumulativeRate(
+        first: Tuple[datetime, int], last: Tuple[datetime, int]
+    ) -> Optional[int]:
+        """
+        计算全程日均（首条 → 末条），作为 tooltip 对照项。
+
+        Args:
+            first: 首条 (时刻, 绝对经验)。
+            last: 末条 (时刻, 绝对经验)。
+
+        Returns:
+            全程日均；跨度为 0 时返回 None。
+        """
+        span_days = (last[0] - first[0]).total_seconds() / 86400
+        if span_days <= 0:
+            return None
+        return int(round((last[1] - first[1]) / span_days))
+
+    def getExpEfficiencyText(self) -> str:
+        """
+        生成「指级效率」看板卡片文本。
+
+        Returns:
+            ``11,336/天`` 形式；数据不足时返回 ``-``。
+        """
+        efficiency = self.getExpEfficiency()
+        if efficiency.rate_per_day is None:
+            return "-"
+        return f"{formatExact(efficiency.rate_per_day)}{EXP_EFFICIENCY_UNIT}"
+
+    def getExpEfficiencyTooltip(self) -> str:
+        """
+        生成「指级效率」看板卡片悬停提示。
+
+        Returns:
+            正常时形如「近 30 天日均｜2026-09-16 18:42 → 2026-10-18 14:01（31.8 天，7 条快照）
+            ｜累计日均 9,522/天」；降级时说明原因与口径。
+        """
+        efficiency = self.getExpEfficiency()
+        window = f"近 {EXP_EFFICIENCY_WINDOW_DAYS} 天日均"
+        if efficiency.rate_per_day is None:
+            reason = efficiency.degraded_reason or "数据不足"
+            return f"指级效率：{reason}｜口径：{window}（绝对经验差 ÷ 实际跨度）"
+
+        parts = [
+            window,
+            f"{efficiency.start_time} → {efficiency.end_time}"
+            f"（{efficiency.span_days:.1f} 天，{efficiency.sample_count} 条快照）",
+        ]
+        if efficiency.sample_count < 3:
+            parts.append("样本较少，仅供参考")
+        if efficiency.cumulative_rate is not None:
+            parts.append(f"累计日均 {formatExact(efficiency.cumulative_rate)}{EXP_EFFICIENCY_UNIT}")
         return "｜".join(parts)
 
     def _normalize(self, snapshot: CommanderSnapshotModel) -> CommanderSnapshotModel:

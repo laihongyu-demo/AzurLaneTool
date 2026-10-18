@@ -82,12 +82,12 @@ class StatisticsPanel(QWidget):
         # 数值口径约定：精确数值固定加千分符；大概数值用 K/M/B/T 缩写（保留一位小数）。
         self._commanderLevelCard = StatCard("指挥官等级", "-", clickable=True) # 格式："指挥官等级（当前经验/需求经验）"
         self._dutyDaysCard = StatCard("执勤天数", "-") # 精确数值：固定千分符（示例：1169->1,169天）
-        self._expEfficiencyCard = StatCard("指级效率", "-") # 精确数值：固定千分符（示例：10000->10,000）
+        self._expEfficiencyCard = StatCard("指级效率", "-") # 精确数值：固定千分符，单位 /天（示例：11336->11,336/天）
         self._cubeCard = StatCard("魔方", "-", clickable=True) # 大概数值：≥10000用K/M/B/T缩写且保留一位小数（示例：10000->10.0K）
         self._redGemCard = StatCard("红尖尖", "-", clickable=True) # 大概数值：≥10000用K/M/B/T缩写且保留一位小数（示例：10000->10.0K）
 
-        # 指级效率口径待定（历史上依赖 Excel 公式），接线见 issue #16
-        self._expEfficiencyCard.setToolTip("指级效率口径待定（依赖 Excel 公式计算），见 issue #16")
+        # 初始口径提示；每次刷新会被服务层返回的口径说明覆盖
+        self._expEfficiencyCard.setToolTip("指级效率：近 30 天日均（绝对经验差 ÷ 实际跨度）")
 
         commander_stats_layout.addStretch()
         commander_stats_layout.addWidget(self._commanderLevelCard)
@@ -371,13 +371,15 @@ class StatisticsPanel(QWidget):
 
     def updateCommanderStats(self) -> None:
         """
-        更新指挥官等级卡片与悬停提示。
+        更新指挥官等级 / 指级效率卡片与悬停提示。
 
-        精确数值口径：``等级（当前经验/需求经验）``，固定加千分符；
+        精确数值口径：``等级（当前经验/需求经验）`` 与 ``日均经验/天``，固定加千分符；
         无快照时服务层返回 ``-``，不抛异常。
         """
         self._commanderLevelCard.setValue(self._commander_service.getCommanderLevelCardText())
         self._commanderLevelCard.setToolTip(self._commander_service.getCommanderLevelCardTooltip())
+        self._expEfficiencyCard.setValue(self._commander_service.getExpEfficiencyText())
+        self._expEfficiencyCard.setToolTip(self._commander_service.getExpEfficiencyTooltip())
 
     def updateResourceStats(self) -> None:
         """
