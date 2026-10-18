@@ -88,6 +88,15 @@ COMMANDER_LEVEL_MIN = 1
 COMMANDER_LEVEL_MAX = 200
 COMMANDER_SNAPSHOT_RECENT_LIMIT = 30
 
+# ---- 指级效率（#16）----
+
+# 窗口天数：取最近 30 天内的快照算日均（口径见 docs/指级效率算法方案_20261018.md §5）
+EXP_EFFICIENCY_WINDOW_DAYS = 30
+# 少于两条快照无法构成区间，直接降级
+EXP_EFFICIENCY_MIN_SAMPLES = 2
+# 卡片单位
+EXP_EFFICIENCY_UNIT = "/天"
+
 # ---- 魔方任务看板 ----
 
 TASK_GROUP_DAILY = "daily"

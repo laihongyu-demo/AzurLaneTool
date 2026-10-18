@@ -259,15 +259,23 @@ class _StubUserService:
 class _StubCommanderService:
     """指挥官服务桩。"""
 
-    def __init__(self, text="-", tooltip="tip"):
+    def __init__(self, text="-", tooltip="tip", efficiency_text="-", efficiency_tooltip="效率tip"):
         self._text = text
         self._tooltip = tooltip
+        self._efficiency_text = efficiency_text
+        self._efficiency_tooltip = efficiency_tooltip
 
     def getCommanderLevelCardText(self):
         return self._text
 
     def getCommanderLevelCardTooltip(self):
         return self._tooltip
+
+    def getExpEfficiencyText(self):
+        return self._efficiency_text
+
+    def getExpEfficiencyTooltip(self):
+        return self._efficiency_tooltip
 
 
 class _StubResourceService:
@@ -321,12 +329,23 @@ class TestStatisticsCardWiring(unittest.TestCase):
         self.assertEqual(panel._cubeCard.toolTip(), "魔方tip")
         self.assertEqual(panel._redGemCard.toolTip(), "红尖尖tip")
 
-    def testExpEfficiencyKeepsPlaceholderWithIssueHint(self):
-        """指级效率本期不接线，但提示指向 #16。"""
+    def testExpEfficiencyShowsServiceValue(self):
+        """指级效率卡取服务层文本与口径提示。"""
+        panel = self._buildPanel(
+            commander_service=_StubCommanderService(
+                "163（77,057/354,350）", "指挥官tip",
+                efficiency_text="11,336/天", efficiency_tooltip="近 30 天日均｜…",
+            ),
+        )
+
+        self.assertEqual(panel._expEfficiencyCard.value(), "11,336/天")
+        self.assertIn("近 30 天日均", panel._expEfficiencyCard.toolTip())
+
+    def testExpEfficiencyDegradesToDash(self):
+        """数据不足时卡片显示 -，不抛异常。"""
         panel = self._buildPanel()
 
         self.assertEqual(panel._expEfficiencyCard.value(), "-")
-        self.assertIn("#16", panel._expEfficiencyCard.toolTip())
 
     def testDatabaseErrorFallsBackToErrorCards(self):
         """统计服务异常时三张卡与其余卡片一起显示错误。"""
