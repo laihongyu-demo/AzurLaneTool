@@ -142,17 +142,22 @@ class TestCommanderCardText(unittest.TestCase):
 
         self.assertTrue(service.getCommanderLevelCardText().startswith("163（"))
 
-    def testTooltipContainsExactValues(self):
-        """悬停提示包含精确经验、需求与记录时间。"""
+    def testTooltipShowsRemainingExpOnly(self):
+        """悬停提示只补充升级还需经验与进度，不重复卡片已有数值。"""
         repository = _StubCommanderRepository(
             snapshots=[_snapshot(1, "2026-10-16 22:53", 163, 77057)],
             requirements=REQUIREMENTS,
         )
         tooltip = CommanderService(repository).getCommanderLevelCardTooltip()
 
-        self.assertIn("77,057", tooltip)
-        self.assertIn("354,350", tooltip)
+        # 354,350 - 77,057 = 277,293
+        self.assertIn("升级还需 277,293 经验", tooltip)
+        self.assertIn("进度 21.7%", tooltip)
         self.assertIn("2026-10-16 22:53", tooltip)
+        # 卡片已展示的三项不再重复
+        self.assertNotIn("77,057", tooltip)
+        self.assertNotIn("354,350", tooltip)
+        self.assertNotIn("本级需求", tooltip)
 
 
 class TestCommanderSnapshotWrite(unittest.TestCase):
