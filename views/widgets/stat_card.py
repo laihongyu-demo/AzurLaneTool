@@ -91,6 +91,15 @@ class StatCard(QWidget):
         self._clickable = clickable
         self._updateStyle()
 
+    def clickable(self) -> bool:
+        """
+        当前是否可点击。
+
+        Returns:
+            True 表示卡片可点击并会发出 ``clicked`` 信号。
+        """
+        return self._clickable
+
     def mousePressEvent(self, event: QMouseEvent) -> None:
         """鼠标按下事件处理。"""
         if event.button() == Qt.LeftButton and self._clickable:
