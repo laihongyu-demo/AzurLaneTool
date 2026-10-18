@@ -84,6 +84,9 @@ class CommanderExpDialog(QDialog):
         self._panel.refreshData()
 
     def closeEvent(self, event) -> None:
-        """关闭前再刷新一次，确保看板卡片与最新记录一致。"""
-        self.dataRefreshed.emit()
+        """关闭窗口。
+
+        刷新时机交给 ``finished``（关闭、Esc、点 X 都会触发），这里不再重复发信号，
+        否则每次关闭会刷新两遍看板。
+        """
         super().closeEvent(event)

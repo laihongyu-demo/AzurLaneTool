@@ -6,7 +6,7 @@
 本阶段（需求文档 v0.2）不提供任何写入接口，录入与编辑推迟到 #17。
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from models.resource_model import ResourceDailyModel
 from repositories.resource_repository import ResourceRepository
@@ -164,6 +164,32 @@ class ResourceService:
             return None
         return series[-1][BALANCE_DATE]
 
+    def getCardView(self, resource_type: str) -> Tuple[str, str]:
+        """
+        一次结余扫描同时生成卡片文本与悬停提示。
+
+        结余链要扫 1800+ 天日汇总与全部明细，分两次调用（文本 / 提示）会把同样的
+        扫描做两遍；看板刷新时直接用本方法可省一半开销。
+
+        Args:
+            resource_type: 资源类型。
+
+        Returns:
+            ``(卡片文本, 悬停提示)``；无数据时文本为 ``-``、提示说明暂无记录。
+        """
+        display_name = RESOURCE_DISPLAY_NAMES.get(resource_type, resource_type)
+        series = self.getBalanceSeries(resource_type)
+        if not series:
+            return "-", f"{display_name}：暂无记录"
+
+        latest = series[-1]
+        text = formatValue(latest[BALANCE_VALUE])
+        tooltip = (
+            f"{display_name}：{formatExact(latest[BALANCE_VALUE])}"
+            f"（末次记录 {self._formatRecordStamp(latest)}）"
+        )
+        return text, tooltip
+
     def getCardText(self, resource_type: str) -> str:
         """
         获取看板卡片显示文本。
@@ -176,10 +202,7 @@ class ResourceService:
         Returns:
             卡片文本；无数据时为 ``-``。
         """
-        balance = self.getBalance(resource_type)
-        if balance is None:
-            return "-"
-        return formatValue(balance)
+        return self.getCardView(resource_type)[0]
 
     def getCardTooltip(self, resource_type: str) -> str:
         """
@@ -193,16 +216,7 @@ class ResourceService:
         Returns:
             提示文本；无数据时说明暂无记录。
         """
-        display_name = RESOURCE_DISPLAY_NAMES.get(resource_type, resource_type)
-        series = self.getBalanceSeries(resource_type)
-        if not series:
-            return f"{display_name}：暂无记录"
-
-        latest = series[-1]
-        return (
-            f"{display_name}：{formatExact(latest[BALANCE_VALUE])}"
-            f"（末次记录 {self._formatRecordStamp(latest)}）"
-        )
+        return self.getCardView(resource_type)[1]
 
     def _formatRecordStamp(self, item: Dict) -> str:
         """
