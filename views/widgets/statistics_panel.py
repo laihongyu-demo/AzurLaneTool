@@ -358,15 +358,19 @@ class StatisticsPanel(QWidget):
         更新魔方 / 红尖尖卡片与悬停提示。
 
         大概数值口径：用 K/M/B/T 缩写并保留一位小数；悬停显示精确数值与数据截止日期。
-        每张卡只扫一遍结余链（文本与提示共用同一次计算）。
+        每张卡只扫一遍结余链（文本、提示与日环比角标共用同一次计算）。
         """
         for card, resource_type in (
             (self._cubeCard, RESOURCE_TYPE_CUBE),
             (self._redGemCard, RESOURCE_TYPE_RED_GEM),
         ):
-            text, tooltip = self._resource_service.getCardView(resource_type)
-            card.setValue(text)
-            card.setToolTip(tooltip)
+            view = self._resource_service.getCardView(resource_type)
+            card.setValue(view.text)
+            card.setToolTip(view.tooltip)
+            if view.delta is None:
+                card.clearBadge()
+            else:
+                card.setBadge(view.delta.display_text, view.delta.tone)
 
     def updateUnlockStats(self, unlock_stats: Dict[str, Any]) -> None:
         """
