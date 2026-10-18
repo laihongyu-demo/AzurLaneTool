@@ -117,6 +117,12 @@ class CommanderService:
             commander_repository: 指挥官数据访问实例。
         """
         self._commander_repository = commander_repository or CommanderRepository()
+        # 等级基准是只读配置表；逐条快照换算绝对经验时会按等级反复查询，
+        # 而每次查询都会新建 SQLite 连接（约 1ms），500+ 条快照就是半秒级开销。
+        self._level_exp_cache: Dict[int, Optional[CommanderLevelExpModel]] = {}
+        # 指级效率的中间结果：一次刷新会取卡片文本、卡片提示与升级预估三次，
+        # 快照写入（本服务内）后失效，避免重复扫描全部快照。
+        self._efficiency_cache: Optional[ExpEfficiency] = None
 
     def getLatestSnapshot(self) -> Optional[CommanderSnapshotModel]:
         """
@@ -134,7 +140,10 @@ class CommanderService:
 
     def getLevelRequirement(self, level: int) -> Optional[CommanderLevelExpModel]:
         """
-        查询指定等级的升级经验基准。
+        查询指定等级的升级经验基准（按等级缓存）。
+
+        基准表由迁移脚本固定、运行期只读，因此可以安全缓存；命中缓存后
+        绝对经验换算不再为每条快照打开一次数据库连接。
 
         Args:
             level: 等级。
@@ -142,12 +151,19 @@ class CommanderService:
         Returns:
             基准模型实例；无该等级或表缺失时返回 None。
         """
+        if level in self._level_exp_cache:
+            return self._level_exp_cache[level]
+
         try:
-            return self._commander_repository.findLevelExp(level)
+            requirement = self._commander_repository.findLevelExp(level)
         except DatabaseError as e:
             if isMissingTableError(e) or isMissingColumnError(e):
+                self._level_exp_cache[level] = None
                 return None
             raise
+
+        self._level_exp_cache[level] = requirement
+        return requirement
 
     def listSnapshots(
         self,
@@ -248,6 +264,7 @@ class CommanderService:
 
         normalized.id = None
         new_id = self._commander_repository.insert(normalized)
+        self._invalidateEfficiencyCache()
         return CommanderWriteResult(
             success=True,
             snapshot_id=new_id,
@@ -291,6 +308,7 @@ class CommanderService:
         if not updated:
             raise ValidationError("更新失败，请刷新列表后重试")
 
+        self._invalidateEfficiencyCache()
         return CommanderWriteResult(
             success=True,
             snapshot_id=normalized.id,
@@ -319,6 +337,7 @@ class CommanderService:
             raise ValidationError("待删除的快照已不存在，请刷新列表")
 
         self._commander_repository.delete(snapshot_id)
+        self._invalidateEfficiencyCache()
         return CommanderWriteResult(
             success=True,
             snapshot_id=snapshot_id,
@@ -455,14 +474,32 @@ class CommanderService:
 
     def getExpEfficiency(self) -> ExpEfficiency:
         """
-        计算指级效率（近 30 天日均）。
+        计算指级效率（近 30 天日均，结果按服务实例缓存）。
 
         口径见 `docs/指级效率算法方案_20261018.md`：
         窗口右端点取最新快照（不是今天），起点取窗口边界之前最近的一条快照；
         若全部历史都落在窗口内，则直接使用最早的一条（跨度会小于窗口）。
 
+        一次刷新会取卡片文本、卡片提示与升级预估共三次，缓存后只扫描一遍快照；
+        通过本服务写入快照时缓存失效。
+
         Returns:
             计算结果；数据不足或异常时 `rate_per_day` 为 None 并给出 `degraded_reason`。
+        """
+        if self._efficiency_cache is None:
+            self._efficiency_cache = self._computeExpEfficiency()
+        return self._efficiency_cache
+
+    def _invalidateEfficiencyCache(self) -> None:
+        """快照发生写入后丢弃指级效率缓存。"""
+        self._efficiency_cache = None
+
+    def _computeExpEfficiency(self) -> ExpEfficiency:
+        """
+        实际计算指级效率（不做缓存）。
+
+        Returns:
+            计算结果。
         """
         points, skipped = self._collectAbsolutePoints()
 

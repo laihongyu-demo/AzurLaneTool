@@ -285,6 +285,12 @@ class _StubResourceService:
         self._texts = texts or {}
         self._tooltips = tooltips or {}
 
+    def getCardView(self, resource_type):
+        return (
+            self._texts.get(resource_type, "-"),
+            self._tooltips.get(resource_type, ""),
+        )
+
     def getCardText(self, resource_type):
         return self._texts.get(resource_type, "-")
 
