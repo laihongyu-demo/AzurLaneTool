@@ -380,7 +380,7 @@ class CommanderService:
         生成「指挥官等级」看板卡片悬停提示。
 
         卡片本身已经展示「等级（当前经验/需求经验）」，所以提示里不再重复这三项，
-        只补充升级还差多少、进度与记录时间。
+        只补充升级还差多少、进度、按当前效率预计还要多少天，以及记录时间。
 
         Returns:
             提示文本。
@@ -397,8 +397,34 @@ class CommanderService:
             parts.append("升级所需经验未知（缺少该等级的基准数据）")
         if overview.progress_rate is not None:
             parts.append(f"进度 {overview.progress_rate:.1f}%")
+        estimate = self._formatUpgradeEstimate(overview.remaining_exp)
+        if estimate:
+            parts.append(estimate)
         parts.append(f"记录于 {latest.statistics_date}")
         return "｜".join(parts)
+
+    def _formatUpgradeEstimate(self, remaining_exp: Optional[int]) -> Optional[str]:
+        """
+        按当前指级效率估算升级所需天数。
+
+        效率取「近 30 天日均」（与指级效率卡同源）；数据不足以算效率时给出占位，
+        而不是悄悄省略这一项。
+
+        Args:
+            remaining_exp: 本级还差多少经验；None 表示基准缺失。
+
+        Returns:
+            形如 ``预期升级 22.0 天`` 的片段；无法给出时返回占位或 None。
+        """
+        if remaining_exp is None:
+            return None
+        if remaining_exp <= 0:
+            return "已满级"
+
+        rate = self.getExpEfficiency().rate_per_day
+        if not rate or rate <= 0:
+            return "预期升级 —"
+        return f"预期升级 {remaining_exp / rate:.1f} 天"
 
     # ----------------------------------------------------- 指级效率（#16）
 

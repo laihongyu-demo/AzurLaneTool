@@ -83,8 +83,8 @@ class StatisticsPanel(QWidget):
         self._commanderLevelCard = StatCard("指挥官等级", "-", clickable=True) # 格式："指挥官等级（当前经验/需求经验）"
         self._dutyDaysCard = StatCard("执勤天数", "-") # 精确数值：固定千分符（示例：1169->1,169天）
         self._expEfficiencyCard = StatCard("指级效率", "-") # 精确数值：固定千分符，单位 /天（示例：11336->11,336/天）
-        self._cubeCard = StatCard("魔方", "-", clickable=True) # 大概数值：≥10000用K/M/B/T缩写且保留一位小数（示例：10000->10.0K）
-        self._redGemCard = StatCard("红尖尖", "-", clickable=True) # 大概数值：≥10000用K/M/B/T缩写且保留一位小数（示例：10000->10.0K）
+        self._cubeCard = StatCard("魔方", "-") # 大概数值：≥10000用K/M/B/T缩写且保留一位小数（示例：10000->10.0K）
+        self._redGemCard = StatCard("红尖尖", "-") # 大概数值：≥10000用K/M/B/T缩写且保留一位小数（示例：10000->10.0K）
 
         # 初始口径提示；每次刷新会被服务层返回的口径说明覆盖
         self._expEfficiencyCard.setToolTip("指级效率：近 30 天日均（绝对经验差 ÷ 实际跨度）")
@@ -195,8 +195,6 @@ class StatisticsPanel(QWidget):
         self._refreshBtn.clicked.connect(self._onRefreshClicked)
         self._mentalCalcBtn.clicked.connect(self._onMentalCalcClicked)
         self._commanderLevelCard.clicked.connect(self._onCommanderLevelClicked)
-        self._cubeCard.clicked.connect(self._onCubeClicked)
-        self._redGemCard.clicked.connect(self._onRedGemClicked)
 
     def _onRefreshClicked(self) -> None:
         """刷新按钮点击事件处理。"""
@@ -232,32 +230,6 @@ class StatisticsPanel(QWidget):
             _result: 对话框返回码（未使用）。
         """
         self.updateCommanderStats()
-
-    def _onCubeClicked(self) -> None:
-        """
-        魔方卡片点击事件处理。
-
-        TODO: 后续实现魔方详细信息的业务逻辑
-        """
-        QMessageBox.information(
-            self,
-            "提示",
-            "开发中",
-            QMessageBox.Ok
-        )
-
-    def _onRedGemClicked(self) -> None:
-        """
-        红尖尖卡片点击事件处理。
-
-        TODO: 后续实现红尖尖详细信息的业务逻辑
-        """
-        QMessageBox.information(
-            self,
-            "提示",
-            "开发中",
-            QMessageBox.Ok
-        )
 
     def _onMentalCalcClicked(self) -> None:
         """

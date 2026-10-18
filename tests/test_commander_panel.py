@@ -293,7 +293,7 @@ class _StubResourceService:
 
 
 class TestStatisticsCardWiring(unittest.TestCase):
-    """数据看板三张卡接线测试。"""
+    """数据看板四张卡接线测试。"""
 
     def _buildPanel(self, statistics_service=None, commander_service=None, resource_service=None):
         """构造统计面板，依赖全部注入。"""
@@ -303,6 +303,14 @@ class TestStatisticsCardWiring(unittest.TestCase):
             commander_service=commander_service or _StubCommanderService(),
             resource_service=resource_service or _StubResourceService(),
         )
+
+    def testResourceCardsAreNotClickable(self):
+        """魔方 / 红尖尖卡片不再响应点击（#14 验收结论：无需跳转）。"""
+        panel = self._buildPanel()
+
+        self.assertFalse(panel._cubeCard.clickable())
+        self.assertFalse(panel._redGemCard.clickable())
+        self.assertTrue(panel._commanderLevelCard.clickable())
 
     def testEmptyDataShowsPlaceholders(self):
         """无数据时三张卡显示 -，不抛异常。"""
