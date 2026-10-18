@@ -57,6 +57,7 @@ class CommanderLevelOverview:
         current_exp: 当前等级内已累积经验。
         required_exp: 本级升级所需经验；基准表缺失时为 None。
         cumulative_exp: 从 1 级起的累计所需经验；基准表缺失时为 None。
+        remaining_exp: 本级升级还差多少经验（需求 - 当前，不小于 0）；无基准时为 None。
         progress_rate: 本级进度百分比（0～100）；无基准时为 None。
         snapshot_date: 数据来源的记录时间。
     """
@@ -65,6 +66,7 @@ class CommanderLevelOverview:
     current_exp: int
     required_exp: Optional[int] = None
     cumulative_exp: Optional[int] = None
+    remaining_exp: Optional[int] = None
     progress_rate: Optional[float] = None
     snapshot_date: str = ""
 
@@ -312,11 +314,14 @@ class CommanderService:
         if required and required > 0:
             progress = min(100.0, max(0.0, current_exp / required * 100))
 
+        remaining = max(0, required - current_exp) if required is not None else None
+
         return CommanderLevelOverview(
             level=level,
             current_exp=current_exp,
             required_exp=required,
             cumulative_exp=cumulative,
+            remaining_exp=remaining,
             progress_rate=progress,
         )
 
@@ -344,20 +349,22 @@ class CommanderService:
         """
         生成「指挥官等级」看板卡片悬停提示。
 
+        卡片本身已经展示「等级（当前经验/需求经验）」，所以提示里不再重复这三项，
+        只补充升级还差多少、进度与记录时间。
+
         Returns:
-            提示文本，包含记录时间与累计经验。
+            提示文本。
         """
         latest = self.getLatestSnapshot()
         if latest is None:
             return "指挥官等级：暂无记录，请在「资源统计」页签录入快照"
 
         overview = self.getLevelOverview(latest.commander_level, latest.commander_exp)
-        parts = [
-            f"指挥官等级 {latest.commander_level}",
-            f"当前经验 {formatExact(latest.commander_exp)}",
-        ]
-        if overview.required_exp is not None:
-            parts.append(f"本级需求 {formatExact(overview.required_exp)}")
+        parts = []
+        if overview.remaining_exp is not None:
+            parts.append(f"升级还需 {formatExact(overview.remaining_exp)} 经验")
+        else:
+            parts.append("升级所需经验未知（缺少该等级的基准数据）")
         if overview.progress_rate is not None:
             parts.append(f"进度 {overview.progress_rate:.1f}%")
         parts.append(f"记录于 {latest.statistics_date}")
