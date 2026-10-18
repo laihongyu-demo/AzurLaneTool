@@ -29,14 +29,7 @@ from views.widgets.regular_entry_panel import RegularEntryPanel  # noqa: E402
 
 APP = QApplication.instance() or QApplication([])
 
-FIXTURE_CATEGORIES = [
-    (RESOURCE_TYPE_CUBE, RESOURCE_DIRECTION_EXPENSE, "活动建造", 2),
-    (RESOURCE_TYPE_CUBE, RESOURCE_DIRECTION_INCOME, "军事委托", 9),
-    (RESOURCE_TYPE_CUBE, RESOURCE_DIRECTION_INCOME, "日常任务", 14),
-    # 红尖尖：同名两向
-    (RESOURCE_TYPE_RED_GEM, RESOURCE_DIRECTION_EXPENSE, "礼包", 6),
-    (RESOURCE_TYPE_RED_GEM, RESOURCE_DIRECTION_INCOME, "礼包", 14),
-]
+CUBE_EXPENSE_ORDER = ["轻型建造", "重型建造", "特型建造", "活动建造", "祈愿建造", "开发船坞", "军部研究"]
 
 
 class TestRegularEntryPanel(unittest.TestCase):
@@ -47,18 +40,8 @@ class TestRegularEntryPanel(unittest.TestCase):
         self._temp_dir = tempfile.mkdtemp(prefix="azurlane_entry_panel_")
         self._db_path = os.path.join(self._temp_dir, "entry.db")
         DatabaseConnection.setDbPath(self._db_path)
+        # 类型字典由 sql/SeedResourceCategories.sql 在启动时写入
         ensureResourceStatisticsSchema(self._db_path)
-
-        conn = sqlite3.connect(self._db_path)
-        try:
-            conn.executemany(
-                "INSERT INTO resource_category (resource_type, direction, name, sort_order)"
-                " VALUES (?, ?, ?, ?)",
-                FIXTURE_CATEGORIES,
-            )
-            conn.commit()
-        finally:
-            conn.close()
 
     def tearDown(self):
         DatabaseConnection.setDbPath(self._original_db_path)
@@ -76,14 +59,19 @@ class TestRegularEntryPanel(unittest.TestCase):
         """构建面板实例。"""
         return RegularEntryPanel(ResourceEntryService())
 
-    def testComboExcludesTaskCoveredTypes(self):
-        """下拉框排除任务看板覆盖的类型，并带方向前缀。"""
+    def testComboFollowsUsageOrder(self):
+        """下拉框按使用习惯排序，且排除任务看板覆盖的类型。"""
         panel = self._buildPanel()
 
         labels = [panel._typeCombo.itemText(i) for i in range(panel._typeCombo.count())]
-        self.assertEqual(labels, ["支出 · 活动建造", "收入 · 军事委托"])
+        self.assertEqual(labels[0], "支出 · 轻型建造")
+        self.assertEqual(labels[:3], ["支出 · 轻型建造", "支出 · 重型建造", "支出 · 特型建造"])
+        self.assertEqual(labels[7], "收入 · 军事委托")
+        self.assertNotIn("收入 · 日常任务", labels)
+        self.assertEqual(labels[-1], "收入 · 未知")
+
         current = panel._typeCombo.currentData()
-        self.assertEqual(current.name, "活动建造")
+        self.assertEqual(current.name, "轻型建造")
         self.assertEqual(current.direction, RESOURCE_DIRECTION_EXPENSE)
 
     def testAmountDefaultsToOne(self):
@@ -114,7 +102,7 @@ class TestRegularEntryPanel(unittest.TestCase):
         rows = self._query("SELECT direction, category, amount, record_time FROM resource_transaction")
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0][0], RESOURCE_DIRECTION_EXPENSE)
-        self.assertEqual(rows[0][1], "活动建造")
+        self.assertEqual(rows[0][1], CUBE_EXPENSE_ORDER[0])
         self.assertEqual(rows[0][2], 30)
         self.assertEqual(rows[0][3], moment.strftime("%Y-%m-%d %H:%M:%S"))
 
@@ -136,7 +124,11 @@ class TestRegularEntryPanel(unittest.TestCase):
         panel = RegularEntryPanel(ResourceEntryService(), resource_type=RESOURCE_TYPE_RED_GEM)
 
         labels = [panel._typeCombo.itemText(i) for i in range(panel._typeCombo.count())]
-        self.assertEqual(labels, ["支出 · 礼包", "收入 · 礼包"])
+        self.assertEqual(labels[0], "支出 · 皮肤")
+        self.assertIn("支出 · 礼包", labels)
+        self.assertIn("收入 · 礼包", labels)
+        self.assertEqual(labels[-1], "收入 · 充值")
+        self.assertEqual(len(labels), 18)
 
     def testUndoDisabledWithoutEntries(self):
         """没有录入时撤销按钮不可用。"""
