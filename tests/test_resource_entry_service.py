@@ -24,19 +24,7 @@ from utils.db_connection import DatabaseConnection
 from utils.db_schema import ensureResourceStatisticsSchema
 from utils.exceptions import ValidationError
 
-FIXTURE_CATEGORIES = [
-    (RESOURCE_TYPE_CUBE, RESOURCE_DIRECTION_EXPENSE, "活动建造", 2),
-    (RESOURCE_TYPE_CUBE, RESOURCE_DIRECTION_EXPENSE, "特型建造", 3),
-    (RESOURCE_TYPE_CUBE, RESOURCE_DIRECTION_INCOME, "军事委托", 9),
-    (RESOURCE_TYPE_CUBE, RESOURCE_DIRECTION_INCOME, "礼包", 20),
-    # 任务看板已覆盖，常规录入不应再列出
-    (RESOURCE_TYPE_CUBE, RESOURCE_DIRECTION_INCOME, "日常任务", 14),
-    # 红尖尖：同名类型同时存在于两个方向，用于校验方向解析
-    (RESOURCE_TYPE_RED_GEM, RESOURCE_DIRECTION_EXPENSE, "礼包", 6),
-    (RESOURCE_TYPE_RED_GEM, RESOURCE_DIRECTION_INCOME, "礼包", 14),
-    (RESOURCE_TYPE_RED_GEM, RESOURCE_DIRECTION_INCOME, "月卡", 12),
-]
-
+# 类型字典由 sql/SeedResourceCategories.sql 在启动时写入，这里只校验顺序
 
 class _TempEntryDatabaseCase(unittest.TestCase):
     """带资源表结构与类型字典的临时库测试基类。"""
@@ -47,25 +35,11 @@ class _TempEntryDatabaseCase(unittest.TestCase):
         self._db_path = os.path.join(self._temp_dir, "entry.db")
         DatabaseConnection.setDbPath(self._db_path)
         ensureResourceStatisticsSchema(self._db_path)
-        self._insertCategories()
         self._service = ResourceEntryService()
 
     def tearDown(self):
         DatabaseConnection.setDbPath(self._original_db_path)
         shutil.rmtree(self._temp_dir, ignore_errors=True)
-
-    def _insertCategories(self) -> None:
-        """写入类型字典。"""
-        conn = sqlite3.connect(self._db_path)
-        try:
-            conn.executemany(
-                "INSERT INTO resource_category (resource_type, direction, name, sort_order)"
-                " VALUES (?, ?, ?, ?)",
-                FIXTURE_CATEGORIES,
-            )
-            conn.commit()
-        finally:
-            conn.close()
 
     def _query(self, sql, params=()):
         """执行只读查询。"""
@@ -92,22 +66,50 @@ class _TempEntryDatabaseCase(unittest.TestCase):
 class TestCategories(_TempEntryDatabaseCase):
     """可选类型查询测试。"""
 
-    def testExpenseListedBeforeIncome(self):
-        """支出类型排在收入类型之前。"""
-        options = self._service.getCategories()
+    def testCubeExpenseOrderFollowsUsage(self):
+        """魔方支出按使用习惯排序。"""
+        options = [
+            option.name for option in self._service.getCategories(RESOURCE_TYPE_CUBE)
+            if option.direction == RESOURCE_DIRECTION_EXPENSE
+        ]
 
         self.assertEqual(
-            [option.name for option in options],
-            ["活动建造", "特型建造", "军事委托", "礼包"],
+            options,
+            ["轻型建造", "重型建造", "特型建造", "活动建造", "祈愿建造", "开发船坞", "军部研究"],
         )
-        self.assertEqual(options[0].direction, RESOURCE_DIRECTION_EXPENSE)
-        self.assertEqual(options[2].direction, RESOURCE_DIRECTION_INCOME)
+
+    def testCubeIncomeOrderFollowsUsage(self):
+        """魔方收入按使用习惯排序，任务看板覆盖的类型排在最后之前就被排除。"""
+        options = [
+            option.name for option in self._service.getCategories(RESOURCE_TYPE_CUBE)
+            if option.direction == RESOURCE_DIRECTION_INCOME
+        ]
+
+        self.assertEqual(options[:6], ["军事委托", "活动签到", "活动任务", "活动商店", "贸易许可证", "节日奖励"])
+        self.assertEqual(options[-3:], ["直购", "补给商店", "未知"])
+        self.assertNotIn("日常任务", options)
+
+    def testRedGemOrderFollowsUsage(self):
+        """红尖尖收入 / 支出各自按使用习惯排序。"""
+        options = self._service.getCategories(RESOURCE_TYPE_RED_GEM)
+        income = [o.name for o in options if o.direction == RESOURCE_DIRECTION_INCOME]
+        expense = [o.name for o in options if o.direction == RESOURCE_DIRECTION_EXPENSE]
+
+        self.assertEqual(
+            income,
+            ["军事委托", "礼包", "月卡", "活动任务", "维护奖励", "节日奖励", "岛屿计划", "主线任务", "充值"],
+        )
+        self.assertEqual(
+            expense,
+            ["皮肤", "礼包", "石油", "船坞", "戒指", "心智", "密语", "星彩奖", "物资"],
+        )
 
     def testTaskCoveredCategoryExcluded(self):
         """任务看板覆盖的类型不出现在常规录入。"""
         names = {option.name for option in self._service.getCategories()}
 
         self.assertNotIn("日常任务", names)
+        self.assertNotIn("每月签到", names)
         self.assertIn("军事委托", names)
 
 
