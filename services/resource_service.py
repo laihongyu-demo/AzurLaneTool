@@ -6,6 +6,8 @@
 本阶段（需求文档 v0.2）不提供任何写入接口，录入与编辑推迟到 #17。
 """
 
+from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from models.resource_model import ResourceDailyModel
@@ -28,6 +30,85 @@ BALANCE_LAST_TIME = "last_record_time"
 
 # 迁移期历史数据只有日期，统一补成 00:00:00 占位；展示时视为"无时刻"退化为日期
 PLACEHOLDER_TIME_SUFFIX = " 00:00:00"
+
+# 日环比角标的方向标识
+DELTA_TONE_UP = "up"
+DELTA_TONE_DOWN = "down"
+DELTA_TONE_FLAT = "flat"
+
+# 角标数值超过该位数改用 K/M 缩写，与卡片的"大概数值"口径保持一致
+DELTA_ABBREVIATE_THRESHOLD = 10000
+
+
+@dataclass
+class ResourceDailyDelta:
+    """
+    卡片结余相较昨日的变化。
+
+    Attributes:
+        delta: 变化量（正数上涨、负数下降、0 持平）。
+        latest_date: 最新记录日 ``yyyy-MM-dd``。
+        previous_date: 前一日 ``yyyy-MM-dd``。
+        latest_balance: 最新记录日结余。
+        previous_balance: 前一日结余。
+        has_anchor: 两天中是否含手填结余锚点（锚点会人为跳变结余）。
+    """
+
+    delta: int
+    latest_date: str
+    previous_date: str
+    latest_balance: int
+    previous_balance: int
+    has_anchor: bool = False
+
+    @property
+    def tone(self) -> str:
+        """
+        变化方向，供视图层选颜色。
+
+        Returns:
+            ``up`` / ``down`` / ``flat``。
+        """
+        if self.delta > 0:
+            return DELTA_TONE_UP
+        if self.delta < 0:
+            return DELTA_TONE_DOWN
+        return DELTA_TONE_FLAT
+
+    @property
+    def display_text(self) -> str:
+        """
+        角标文案：``↑111`` / ``↓111`` / ``—``。
+
+        Returns:
+            展示文本。
+        """
+        if self.delta == 0:
+            return "—"
+        magnitude = abs(self.delta)
+        rendered = (
+            formatExact(magnitude)
+            if magnitude < DELTA_ABBREVIATE_THRESHOLD
+            else formatValue(magnitude)
+        )
+        arrow = "↑" if self.delta > 0 else "↓"
+        return f"{arrow}{rendered}"
+
+
+@dataclass
+class ResourceCardView:
+    """
+    资源卡片的完整展示内容（一次结余扫描产出）。
+
+    Attributes:
+        text: 卡片数值文本（大概数值口径）。
+        tooltip: 悬停提示（精确值 + 末次记录 + 日环比说明）。
+        delta: 日环比结果；不可比时为 None。
+    """
+
+    text: str
+    tooltip: str
+    delta: Optional[ResourceDailyDelta] = None
 
 
 class ResourceService:
@@ -164,23 +245,23 @@ class ResourceService:
             return None
         return series[-1][BALANCE_DATE]
 
-    def getCardView(self, resource_type: str) -> Tuple[str, str]:
+    def getCardView(self, resource_type: str) -> ResourceCardView:
         """
-        一次结余扫描同时生成卡片文本与悬停提示。
+        一次结余扫描生成卡片数值、悬停提示与日环比角标。
 
         结余链要扫 1800+ 天日汇总与全部明细，分两次调用（文本 / 提示）会把同样的
-        扫描做两遍；看板刷新时直接用本方法可省一半开销。
+        扫描做两遍；看板刷新时直接用本方法可省一半开销，角标也不额外查询。
 
         Args:
             resource_type: 资源类型。
 
         Returns:
-            ``(卡片文本, 悬停提示)``；无数据时文本为 ``-``、提示说明暂无记录。
+            卡片展示数据；无数据时文本为 ``-``、提示说明暂无记录。
         """
         display_name = RESOURCE_DISPLAY_NAMES.get(resource_type, resource_type)
         series = self.getBalanceSeries(resource_type)
         if not series:
-            return "-", f"{display_name}：暂无记录"
+            return ResourceCardView("-", f"{display_name}：暂无记录")
 
         latest = series[-1]
         text = formatValue(latest[BALANCE_VALUE])
@@ -188,7 +269,61 @@ class ResourceService:
             f"{display_name}：{formatExact(latest[BALANCE_VALUE])}"
             f"（末次记录 {self._formatRecordStamp(latest)}）"
         )
-        return text, tooltip
+
+        delta, note = self._buildDailyDelta(series)
+        return ResourceCardView(text, f"{tooltip}｜{note}", delta)
+
+    def _buildDailyDelta(
+        self, series: List[Dict]
+    ) -> Tuple[Optional[ResourceDailyDelta], str]:
+        """
+        按结余链最后两行计算日环比。
+
+        只有最新日的**自然日前一天**也有记录时才算"较昨日"；断档时不拿更早的
+        记录冒充昨天，直接标注无法比较。
+
+        Args:
+            series: :meth:`getBalanceSeries` 的结果。
+
+        Returns:
+            ``(环比结果或 None, 追加到 tooltip 的说明文案)``。
+        """
+        if len(series) < 2:
+            return None, "仅一天记录，无法比较"
+
+        latest = series[-1]
+        previous = series[-2]
+        latest_date = date.fromisoformat(latest[BALANCE_DATE])
+        previous_date = date.fromisoformat(previous[BALANCE_DATE])
+        if latest_date - previous_date != timedelta(days=1):
+            return None, f"昨日（{latest_date - timedelta(days=1):%Y-%m-%d}）无记录，无法比较"
+
+        has_anchor = (
+            latest.get(BALANCE_OVERRIDE) is not None
+            or previous.get(BALANCE_OVERRIDE) is not None
+        )
+        delta = ResourceDailyDelta(
+            delta=int(latest[BALANCE_VALUE]) - int(previous[BALANCE_VALUE]),
+            latest_date=latest[BALANCE_DATE],
+            previous_date=previous[BALANCE_DATE],
+            latest_balance=int(latest[BALANCE_VALUE]),
+            previous_balance=int(previous[BALANCE_VALUE]),
+            has_anchor=has_anchor,
+        )
+
+        anchor_note = "（含手填结余）" if has_anchor else ""
+        if delta.delta == 0:
+            note = (
+                f"与昨日持平（{delta.previous_date}、{delta.latest_date} "
+                f"均为 {formatExact(delta.latest_balance)}）{anchor_note}"
+            )
+        else:
+            note = (
+                f"较昨日 {delta.delta:+d}"
+                f"（{delta.previous_date} {formatExact(delta.previous_balance)} → "
+                f"{delta.latest_date} {formatExact(delta.latest_balance)}）{anchor_note}"
+            )
+        return delta, note
 
     def getCardText(self, resource_type: str) -> str:
         """
@@ -202,7 +337,7 @@ class ResourceService:
         Returns:
             卡片文本；无数据时为 ``-``。
         """
-        return self.getCardView(resource_type)[0]
+        return self.getCardView(resource_type).text
 
     def getCardTooltip(self, resource_type: str) -> str:
         """
@@ -216,7 +351,7 @@ class ResourceService:
         Returns:
             提示文本；无数据时说明暂无记录。
         """
-        return self.getCardView(resource_type)[1]
+        return self.getCardView(resource_type).tooltip
 
     def _formatRecordStamp(self, item: Dict) -> str:
         """

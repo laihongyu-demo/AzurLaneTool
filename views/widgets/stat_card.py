@@ -5,9 +5,16 @@
 """
 
 import time
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel
+from PyQt5.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QMouseEvent
+
+# 日环比角标的三档配色（红涨绿跌，与需求方约定一致）
+BADGE_TONE_STYLES = {
+    "up": "font-size: 14px; font-weight: bold; color: #c62828;",
+    "down": "font-size: 14px; font-weight: bold; color: #2e7d32;",
+    "flat": "font-size: 14px; font-weight: bold; color: #757575;",
+}
 
 
 class StatCard(QWidget):
@@ -52,7 +59,20 @@ class StatCard(QWidget):
         self._valueLabel = QLabel(self._value)
         self._valueLabel.setStyleSheet("font-size: 28px; font-weight: bold; color: #333;")
         self._valueLabel.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self._valueLabel)
+
+        # 数值 + 角标同一行：角标贴数值右侧，居中后整体仍居中，卡片高度不变
+        value_row = QHBoxLayout()
+        value_row.setSpacing(6)
+        value_row.addStretch()
+        value_row.addWidget(self._valueLabel, 0, Qt.AlignVCenter)
+        self._badgeLabel = QLabel("")
+        self._badgeLabel.setVisible(False)
+        value_row.addWidget(self._badgeLabel, 0, Qt.AlignVCenter)
+        value_row.addStretch()
+        layout.addLayout(value_row)
+
+        self._badge_text = ""
+        self._badge_tone = ""
 
         self._updateStyle()
 
@@ -136,3 +156,32 @@ class StatCard(QWidget):
     def value(self) -> str:
         """获取当前数值。"""
         return self._value
+
+    def setBadge(self, text: str, tone: str = "flat") -> None:
+        """
+        设置数值右侧的角标。
+
+        Args:
+            text: 角标文案，如 ``↑111`` / ``↓111`` / ``—``。
+            tone: 配色档位，``up`` / ``down`` / ``flat``。
+        """
+        self._badge_text = text
+        self._badge_tone = tone
+        self._badgeLabel.setText(text)
+        self._badgeLabel.setStyleSheet(BADGE_TONE_STYLES.get(tone, BADGE_TONE_STYLES["flat"]))
+        self._badgeLabel.setVisible(bool(text))
+
+    def clearBadge(self) -> None:
+        """移除角标（数据不可比或卡片降级时调用）。"""
+        self._badge_text = ""
+        self._badge_tone = ""
+        self._badgeLabel.clear()
+        self._badgeLabel.setVisible(False)
+
+    def badgeText(self) -> str:
+        """获取当前角标文案；无角标时为空串。"""
+        return self._badge_text
+
+    def badgeTone(self) -> str:
+        """获取当前角标配色档位；无角标时为空串。"""
+        return self._badge_tone

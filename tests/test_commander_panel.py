@@ -18,7 +18,7 @@ from PyQt5.QtWidgets import QApplication, QMessageBox, QScrollArea  # noqa: E402
 
 from services.commander_service import CommanderService  # noqa: E402
 from services.cube_task_service import CubeTaskService  # noqa: E402
-from services.resource_service import ResourceService  # noqa: E402
+from services.resource_service import ResourceCardView, ResourceDailyDelta, ResourceService  # noqa: E402
 from utils.db_connection import DatabaseConnection  # noqa: E402
 from utils.db_schema import ensureResourceStatisticsSchema  # noqa: E402
 from utils.exceptions import DatabaseError  # noqa: E402
@@ -281,14 +281,16 @@ class _StubCommanderService:
 class _StubResourceService:
     """资源服务桩。"""
 
-    def __init__(self, texts=None, tooltips=None):
+    def __init__(self, texts=None, tooltips=None, deltas=None):
         self._texts = texts or {}
         self._tooltips = tooltips or {}
+        self._deltas = deltas or {}
 
     def getCardView(self, resource_type):
-        return (
-            self._texts.get(resource_type, "-"),
-            self._tooltips.get(resource_type, ""),
+        return ResourceCardView(
+            text=self._texts.get(resource_type, "-"),
+            tooltip=self._tooltips.get(resource_type, ""),
+            delta=self._deltas.get(resource_type),
         )
 
     def getCardText(self, resource_type):
@@ -319,13 +321,33 @@ class TestStatisticsCardWiring(unittest.TestCase):
         self.assertTrue(panel._commanderLevelCard.clickable())
 
     def testEmptyDataShowsPlaceholders(self):
-        """无数据时三张卡显示 -，不抛异常。"""
+        """无数据时三张卡显示 -，不抛异常，且不显示角标。"""
         panel = self._buildPanel()
 
         self.assertEqual(panel._commanderLevelCard.value(), "-")
         self.assertEqual(panel._cubeCard.value(), "-")
         self.assertEqual(panel._redGemCard.value(), "-")
         self.assertEqual(panel._expEfficiencyCard.value(), "-")
+        self.assertEqual(panel._cubeCard.badgeText(), "")
+        self.assertEqual(panel._redGemCard.badgeText(), "")
+
+    def testResourceCardsShowDeltaBadge(self):
+        """资源卡展示日环比角标与对应配色档位。"""
+        panel = self._buildPanel(
+            resource_service=_StubResourceService(
+                {"cube": "4.1K", "red_gem": "3.4K"},
+                {"cube": "魔方tip", "red_gem": "红尖尖tip"},
+                deltas={
+                    "cube": ResourceDailyDelta(10, "2026-10-18", "2026-10-17", 4086, 4076),
+                    "red_gem": ResourceDailyDelta(-30, "2026-10-18", "2026-10-17", 3411, 3441),
+                },
+            ),
+        )
+
+        self.assertEqual(panel._cubeCard.badgeText(), "↑10")
+        self.assertEqual(panel._cubeCard.badgeTone(), "up")
+        self.assertEqual(panel._redGemCard.badgeText(), "↓30")
+        self.assertEqual(panel._redGemCard.badgeTone(), "down")
 
     def testCardsShowServiceValues(self):
         """卡片取服务层已格式化的文本，并写入悬停提示。"""
