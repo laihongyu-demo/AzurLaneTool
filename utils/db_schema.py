@@ -24,12 +24,16 @@ def ensureResourceStatisticsSchema(db_path: Optional[str] = None) -> None:
     确保资源统计与魔方任务看板相关表、索引与任务定义就位，并把旧结构升级到当前口径。
 
     执行 ``sql/CreateResourceStatisticsTables.sql``、``sql/CreateCubeTaskTables.sql`` 与
-    ``sql/SeedResourceCategories.sql``（DDL 全部 ``IF NOT EXISTS``，任务定义与类型字典用
+    ``sql/SeedResourceCategories.sql``（DDL 全部 ``IF NOT EXISTS``，任务定义用
     ``ON CONFLICT DO UPDATE``），随后运行幂等升级步骤：
 
     - 明细的 ``record_date``（仅日期）→ ``record_time``（``yyyy-MM-dd HH:mm:ss``）
     - 日汇总补齐 ``last_record_time``（该日最后一笔的准确时刻）
+    - 类型字典补齐 ``is_active``（1 启用 / 0 停用）
     - 重建明细上的时间索引
+
+    类型字典只在表为空时播种：用户自助维护（#21）后的改名、顺序与停用状态
+    不会被启动流程覆盖。
 
     可重复调用；不会破坏既有数据。
 
@@ -49,8 +53,9 @@ def ensureResourceStatisticsSchema(db_path: Optional[str] = None) -> None:
         _upgradeCubeTaskSchema(conn)
         conn.executescript(resource_sql)
         conn.executescript(task_sql)
-        # 类型字典按使用习惯重排（幂等 upsert；自助维护 #21 落地后需改为仅补缺失）
-        conn.executescript(category_sql)
+        _upgradeResourceCategorySchema(conn)
+        # 类型字典仅在为空时播种；已有数据时不再改写顺序/名称/停用状态
+        _seedCategoriesIfEmpty(conn, category_sql)
         _backfillLastRecordTime(conn)
 
 
@@ -110,6 +115,42 @@ def _upgradeCubeTaskSchema(conn: sqlite3.Connection) -> None:
     columns = _tableColumns(conn, "cube_task")
     if columns and "short_name" not in columns:
         conn.execute("ALTER TABLE cube_task ADD COLUMN short_name TEXT NOT NULL DEFAULT ''")
+
+
+def _upgradeResourceCategorySchema(conn: sqlite3.Connection) -> None:
+    """
+    为类型字典补 ``is_active`` 列（停用 / 启用，#21）。
+
+    新库由 SQL 脚本直接建出该列；老库在这里补默认值 1（全部启用），
+    可重复执行，不会改动已存在的名称与顺序。
+
+    Args:
+        conn: 数据库连接。
+    """
+    columns = _tableColumns(conn, "resource_category")
+    if columns and "is_active" not in columns:
+        conn.execute(
+            "ALTER TABLE resource_category"
+            " ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1))"
+        )
+
+
+def _seedCategoriesIfEmpty(conn: sqlite3.Connection, seed_sql: str) -> None:
+    """
+    仅在类型字典为空时写入默认类型。
+
+    改成「空表播种」而不是每次启动 upsert，是为了让用户自助维护（#21）的结果——
+    改名、排序、停用——在重启后保留；否则启动会把 ``sort_order`` 写回默认值，
+    并让改名后的旧名称重新出现。
+
+    Args:
+        conn: 数据库连接。
+        seed_sql: ``sql/SeedResourceCategories.sql`` 的内容。
+    """
+    row = conn.execute("SELECT COUNT(*) FROM resource_category").fetchone()
+    if row and int(row[0]) > 0:
+        return
+    conn.executescript(seed_sql)
 
 
 def _backfillLastRecordTime(conn: sqlite3.Connection) -> None:

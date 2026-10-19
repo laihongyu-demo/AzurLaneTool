@@ -38,12 +38,14 @@ CREATE TABLE IF NOT EXISTS resource_transaction (
 );
 
 -- 事件字典：录入下拉候选，来自原表格枚举
+-- is_active：1 启用 / 0 停用。停用后不出现在录入下拉，历史明细仍保留原名。
 CREATE TABLE IF NOT EXISTS resource_category (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     resource_type TEXT NOT NULL CHECK (resource_type IN ('cube', 'red_gem')),
     direction     TEXT NOT NULL CHECK (direction IN ('income', 'expense')),
     name          TEXT NOT NULL,
     sort_order    INTEGER NOT NULL DEFAULT 0,
+    is_active     INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
     UNIQUE (resource_type, direction, name)
 );
 

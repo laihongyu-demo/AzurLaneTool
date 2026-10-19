@@ -26,6 +26,7 @@ from utils.exceptions import ValidationError
 
 # 类型字典由 sql/SeedResourceCategories.sql 在启动时写入，这里只校验顺序
 
+
 class _TempEntryDatabaseCase(unittest.TestCase):
     """带资源表结构与类型字典的临时库测试基类。"""
 
@@ -112,6 +113,22 @@ class TestCategories(_TempEntryDatabaseCase):
         self.assertNotIn("每月签到", names)
         self.assertIn("军事委托", names)
 
+    def testInactiveCategoryExcluded(self):
+        """停用的类型不出现在常规录入下拉（#21）。"""
+        self._execute(
+            "UPDATE resource_category SET is_active = 0"
+            " WHERE resource_type = ? AND direction = ? AND name = ?",
+            (RESOURCE_TYPE_CUBE, RESOURCE_DIRECTION_EXPENSE, "活动建造"),
+        )
+
+        names = {
+            option.name for option in self._service.getCategories(RESOURCE_TYPE_CUBE)
+            if option.direction == RESOURCE_DIRECTION_EXPENSE
+        }
+
+        self.assertNotIn("活动建造", names)
+        self.assertIn("轻型建造", names)
+
 
 class TestRecord(_TempEntryDatabaseCase):
     """记账测试。"""
@@ -180,6 +197,18 @@ class TestRecord(_TempEntryDatabaseCase):
         """未知类型被拒绝。"""
         with self.assertRaises(ValidationError):
             self._service.record("不存在的类型", RESOURCE_DIRECTION_INCOME, 1, self._moment())
+
+    def testInactiveCategoryRejected(self):
+        """停用类型即使用旧界面传入也不能记账（#21）。"""
+        self._execute(
+            "UPDATE resource_category SET is_active = 0"
+            " WHERE resource_type = ? AND direction = ? AND name = ?",
+            (RESOURCE_TYPE_CUBE, RESOURCE_DIRECTION_EXPENSE, "活动建造"),
+        )
+
+        with self.assertRaises(ValidationError):
+            self._service.record("活动建造", RESOURCE_DIRECTION_EXPENSE, 1, self._moment())
+        self.assertEqual(self._query("SELECT id FROM resource_transaction"), [])
 
     def testSummaryOnlyDayRejected(self):
         """历史汇总段（summary_only）不允许补录明细。"""

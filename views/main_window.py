@@ -8,10 +8,9 @@ from datetime import datetime, time as datetime_time, timedelta
 
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QPushButton, QStatusBar, QMenuBar, QMenu,
-    QAction, QMessageBox, QTabWidget
+    QLabel, QStatusBar, QAction, QMessageBox, QTabWidget
 )
-from PyQt5.QtCore import QEvent, Qt, QTimer
+from PyQt5.QtCore import QEvent, QTimer
 from PyQt5.QtGui import QIcon
 
 from services.data_service import DataService
@@ -22,13 +21,15 @@ from services.awaken_service import AwakenService, AwakenResult
 from services.limit_break_service import LimitBreakService, LimitBreakResult
 from services.codex_oath_service import CodexOathService, OathResult
 from services.statistics_service import StatisticsService
-from services.mental_calculation_service import MentalCalculationService, MentalCalculationResult
+from services.mental_calculation_service import MentalCalculationService
 from services.commander_service import CommanderService, CommanderWriteResult
 from services.cube_task_service import CubeTaskService, CubeTaskWriteResult
 from services.resource_service import ResourceService
+from services.resource_category_service import ResourceCategoryService
 from views.widgets.statistics_panel import StatisticsPanel
 from views.widgets.ship_management_panel import ShipManagementPanel
 from views.widgets.resource_management_panel import ResourceManagementPanel
+from views.widgets.settings_panel import SettingsPanel
 from utils import time_source
 from utils.constants import (
     WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT, APP_NAME, APP_ICON_PATH
@@ -55,7 +56,8 @@ class MainWindow(QMainWindow):
         mental_calculation_service: MentalCalculationService = None,
         commander_service: CommanderService = None,
         cube_task_service: CubeTaskService = None,
-        resource_service: ResourceService = None
+        resource_service: ResourceService = None,
+        category_service: ResourceCategoryService = None
     ):
         """
         初始化主窗口。
@@ -73,6 +75,7 @@ class MainWindow(QMainWindow):
             commander_service: 指挥官服务实例。
             cube_task_service: 魔方任务看板服务实例。
             resource_service: 资源统计服务实例（只读）。
+            category_service: 资源类型字典维护服务实例。
         """
         super().__init__()
         self._data_service = data_service or DataService()
@@ -87,6 +90,7 @@ class MainWindow(QMainWindow):
         self._commander_service = commander_service or CommanderService()
         self._cube_task_service = cube_task_service or CubeTaskService()
         self._resource_service = resource_service or ResourceService()
+        self._category_service = category_service or ResourceCategoryService()
         self._last_seen_date = time_source.today()
         self._midnightTimer = None
 
@@ -142,6 +146,9 @@ class MainWindow(QMainWindow):
         )
         self._tabWidget.addTab(self._resourceManagementPanel, "资源统计")
 
+        self._settingsPanel = SettingsPanel(category_service=self._category_service)
+        self._tabWidget.addTab(self._settingsPanel, "设置")
+
         main_layout.addWidget(self._tabWidget)
 
     def _initMenuBar(self) -> None:
@@ -154,6 +161,13 @@ class MainWindow(QMainWindow):
         refresh_action.setShortcut("Ctrl+R")
         refresh_action.triggered.connect(self._onRefreshClicked)
         file_menu.addAction(refresh_action)
+
+        file_menu.addSeparator()
+
+        settings_action = QAction("设置…", self)
+        settings_action.setShortcut("Ctrl+,")
+        settings_action.triggered.connect(self._onSettingsClicked)
+        file_menu.addAction(settings_action)
 
         file_menu.addSeparator()
 
@@ -188,6 +202,8 @@ class MainWindow(QMainWindow):
         self._resourceManagementPanel.dataRefreshed.connect(self._onResourceDataRefreshed)
         self._resourceManagementPanel.taskResult.connect(self._onCubeTaskResult)
         self._resourceManagementPanel.entryResult.connect(self._onResourceEntryResult)
+        self._settingsPanel.categoriesChanged.connect(self._onCategoriesChanged)
+        self._settingsPanel.resultReady.connect(self._onSettingsResult)
 
     def _initMidnightTimer(self) -> None:
         """初始化跨天定时器：每天零点后触发一次，不做秒级轮询。"""
@@ -237,12 +253,17 @@ class MainWindow(QMainWindow):
 
     def _panels(self):
         """
-        当前三个页签面板。
+        当前四个页签面板。
 
         Returns:
             面板元组。
         """
-        return (self._statisticsPanel, self._shipManagementPanel, self._resourceManagementPanel)
+        return (
+            self._statisticsPanel,
+            self._shipManagementPanel,
+            self._resourceManagementPanel,
+            self._settingsPanel,
+        )
 
     def _onWindowActivated(self) -> None:
         """窗口重新激活：同步当前页时间；跨天时再补一次数据刷新。"""
@@ -357,17 +378,35 @@ class MainWindow(QMainWindow):
         """
         self._statusBar.showMessage(result.toStatusBarMessage())
 
+    def _onCategoriesChanged(self) -> None:
+        """类型字典变化：让两个常规录入面板的下拉立即跟上。"""
+        self._resourceManagementPanel.refreshEntryCategories()
+
+    def _onSettingsResult(self, result) -> None:
+        """
+        设置页写操作结果事件处理。
+
+        Args:
+            result: `CategoryWriteResult` 实例。
+        """
+        self._statusBar.showMessage(result.toStatusBarMessage())
+
+    def _onSettingsClicked(self) -> None:
+        """文件 → 设置…：切到设置页签。"""
+        self._tabWidget.setCurrentWidget(self._settingsPanel)
+
     def _onStatisticsDataRefreshed(self) -> None:
         """统计数据刷新完成事件处理。"""
         self._statusBar.showMessage("统计数据已更新")
 
     def refreshData(self) -> None:
-        """刷新界面数据：先同步时间上下文，再重算三页。"""
+        """刷新界面数据：先同步时间上下文，再重算各页。"""
         for panel in self._panels():
             panel.syncTimeContext()
         self._statisticsPanel.refreshData()
         self._shipManagementPanel.refreshData()
         self._resourceManagementPanel.refreshData()
+        self._settingsPanel.refreshData()
         self._last_seen_date = time_source.today()
 
     def _showAbout(self) -> None:

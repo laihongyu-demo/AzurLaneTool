@@ -1,10 +1,10 @@
 -- 类型字典：按使用习惯排序（sort_order 越小越靠前）
 --
--- 幂等脚本：以 (resource_type, direction, name) 为唯一键 upsert，启动时执行一次。
+-- 仅在 resource_category 为空时由 utils/db_schema.py 执行一次（见 _seedCategoriesIfEmpty）。
+-- 之后用户的改名 / 顺序 / 停用状态一律以库为准，启动不再覆盖（#21）。
 -- 顺序由使用频率决定，新类型统一补在各自方向末尾；「未知」永远是最后一项。
 --
--- 注意：本脚本会把 sort_order 重置为下面的默认值，因此类型字典自助维护（#21）
--- 落地前，用户手工调整顺序会在下次启动被覆盖。
+-- 这里的 ON CONFLICT DO NOTHING 只是防重放兜底：同一份脚本重复执行不会产生重复行。
 
 -- ---- 魔方 · 收入 ----
 INSERT INTO resource_category (resource_type, direction, name, sort_order) VALUES
@@ -25,7 +25,7 @@ INSERT INTO resource_category (resource_type, direction, name, sort_order) VALUE
     -- 历史遗留、使用极少，排在列表后段
     ('cube', 'income', '补给商店',   9500),
     ('cube', 'income', '未知',       9999)
-ON CONFLICT(resource_type, direction, name) DO UPDATE SET sort_order = excluded.sort_order;
+ON CONFLICT(resource_type, direction, name) DO NOTHING;
 
 -- ---- 魔方 · 支出 ----
 INSERT INTO resource_category (resource_type, direction, name, sort_order) VALUES
@@ -36,7 +36,7 @@ INSERT INTO resource_category (resource_type, direction, name, sort_order) VALUE
     ('cube', 'expense', '祈愿建造',  50),
     ('cube', 'expense', '开发船坞',  60),
     ('cube', 'expense', '军部研究',  70)
-ON CONFLICT(resource_type, direction, name) DO UPDATE SET sort_order = excluded.sort_order;
+ON CONFLICT(resource_type, direction, name) DO NOTHING;
 
 -- ---- 红尖尖 · 收入 ----
 INSERT INTO resource_category (resource_type, direction, name, sort_order) VALUES
@@ -49,7 +49,7 @@ INSERT INTO resource_category (resource_type, direction, name, sort_order) VALUE
     ('red_gem', 'income', '岛屿计划',  70),
     ('red_gem', 'income', '主线任务',  80),
     ('red_gem', 'income', '充值',      90)
-ON CONFLICT(resource_type, direction, name) DO UPDATE SET sort_order = excluded.sort_order;
+ON CONFLICT(resource_type, direction, name) DO NOTHING;
 
 -- ---- 红尖尖 · 支出 ----
 INSERT INTO resource_category (resource_type, direction, name, sort_order) VALUES
@@ -62,4 +62,4 @@ INSERT INTO resource_category (resource_type, direction, name, sort_order) VALUE
     ('red_gem', 'expense', '密语',    70),
     ('red_gem', 'expense', '星彩奖',  80),
     ('red_gem', 'expense', '物资',    90)
-ON CONFLICT(resource_type, direction, name) DO UPDATE SET sort_order = excluded.sort_order;
+ON CONFLICT(resource_type, direction, name) DO NOTHING;

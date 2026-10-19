@@ -41,6 +41,17 @@ CREATE INDEX idx_resource_transaction_date
     ON resource_transaction (resource_type, record_date);
 """
 
+LEGACY_CATEGORY_SCHEMA = """
+CREATE TABLE resource_category (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    resource_type TEXT NOT NULL,
+    direction     TEXT NOT NULL,
+    name          TEXT NOT NULL,
+    sort_order    INTEGER NOT NULL DEFAULT 0,
+    UNIQUE (resource_type, direction, name)
+);
+"""
+
 
 def _columns(conn: sqlite3.Connection, table: str):
     """读取表的列名集合。"""
@@ -154,6 +165,87 @@ class TestSchemaBootstrap(unittest.TestCase):
             conn.close()
 
         self.assertEqual(times, ["2024-10-16 00:00:00"])
+
+
+class TestCategoryDictionarySchema(unittest.TestCase):
+    """类型字典结构升级与种子策略（#21）。"""
+
+    def setUp(self):
+        self._temp_dir = tempfile.mkdtemp(prefix="azurlane_category_schema_")
+        self._db_path = os.path.join(self._temp_dir, "schema.db")
+
+    def tearDown(self):
+        shutil.rmtree(self._temp_dir, ignore_errors=True)
+
+    def testAddsIsActiveColumnToLegacyTable(self):
+        """老库缺 is_active 时补列（默认启用），且不写入种子数据。"""
+        conn = sqlite3.connect(self._db_path)
+        try:
+            conn.executescript(LEGACY_CATEGORY_SCHEMA)
+            conn.execute(
+                "INSERT INTO resource_category (resource_type, direction, name, sort_order)"
+                " VALUES ('cube', 'income', '自定义类型', 5)"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        ensureResourceStatisticsSchema(self._db_path)
+
+        conn = sqlite3.connect(self._db_path)
+        try:
+            columns = _columns(conn, "resource_category")
+            rows = conn.execute(
+                "SELECT name, sort_order, is_active FROM resource_category"
+            ).fetchall()
+        finally:
+            conn.close()
+
+        self.assertIn("is_active", columns)
+        self.assertEqual(rows, [("自定义类型", 5, 1)])
+
+    def testSeedOnlyRunsOnEmptyDictionary(self):
+        """已有字典时启动不改写名称、顺序与停用状态。"""
+        ensureResourceStatisticsSchema(self._db_path)
+
+        conn = sqlite3.connect(self._db_path)
+        try:
+            total = conn.execute("SELECT COUNT(*) FROM resource_category").fetchone()[0]
+            conn.execute(
+                "UPDATE resource_category SET sort_order = 5"
+                " WHERE resource_type = 'cube' AND direction = 'expense' AND name = '轻型建造'"
+            )
+            conn.execute(
+                "UPDATE resource_category SET name = '补给兑换'"
+                " WHERE resource_type = 'cube' AND direction = 'income' AND name = '补给商店'"
+            )
+            conn.execute(
+                "UPDATE resource_category SET is_active = 0"
+                " WHERE resource_type = 'cube' AND direction = 'income' AND name = '未知'"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        ensureResourceStatisticsSchema(self._db_path)
+
+        conn = sqlite3.connect(self._db_path)
+        try:
+            rows = conn.execute(
+                "SELECT name, sort_order, is_active FROM resource_category"
+                " WHERE resource_type = 'cube' AND direction = 'income'"
+                " ORDER BY sort_order"
+            ).fetchall()
+            renamed = conn.execute(
+                "SELECT COUNT(*) FROM resource_category WHERE name = '补给商店'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        self.assertEqual(total, 41)
+        self.assertEqual(rows[-2], ("补给兑换", 9500, 1))
+        self.assertEqual(rows[-1], ("未知", 9999, 0))
+        self.assertEqual(renamed, 0)
 
 
 if __name__ == "__main__":

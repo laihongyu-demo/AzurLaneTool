@@ -8,7 +8,7 @@
 """
 
 import sqlite3
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from models.resource_model import (
     ResourceCategoryModel, ResourceDailyModel, ResourceTransactionModel
@@ -358,13 +358,17 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"删除资源日汇总失败: {e}")
 
-    def findCategories(self, resource_type: str, direction: str) -> List[ResourceCategoryModel]:
+    def findCategories(
+        self, resource_type: str, direction: str, include_inactive: bool = False
+    ) -> List[ResourceCategoryModel]:
         """
         查询事件字典。
 
         Args:
             resource_type: 资源类型。
             direction: 方向，``income`` 或 ``expense``。
+            include_inactive: 是否连同已停用的类型一起返回。录入下拉用默认值 False，
+                类型字典维护界面传 True。
 
         Returns:
             字典模型列表，按排序序号与名称升序。
@@ -373,9 +377,10 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
             DatabaseError: 当查询失败时抛出。
         """
         sql = f"""
-            SELECT id, resource_type, direction, name, sort_order
+            SELECT id, resource_type, direction, name, sort_order, is_active
             FROM {self.CATEGORY_TABLE}
             WHERE resource_type = ? AND direction = ?
+            {'AND is_active = 1' if not include_inactive else ''}
             ORDER BY sort_order, name
         """
         try:
@@ -383,6 +388,89 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
             return [ResourceCategoryModel.fromDict(row) for row in results]
         except Exception as e:
             raise DatabaseError(f"查询资源事件字典失败: {e}")
+
+    def findCategoryById(self, category_id: int) -> Optional[ResourceCategoryModel]:
+        """
+        根据 ID 查询单个类型字典项。
+
+        Args:
+            category_id: 字典项 ID。
+
+        Returns:
+            字典模型；不存在时返回 None。
+
+        Raises:
+            DatabaseError: 当查询失败时抛出。
+        """
+        sql = f"""
+            SELECT id, resource_type, direction, name, sort_order, is_active
+            FROM {self.CATEGORY_TABLE}
+            WHERE id = ?
+        """
+        try:
+            results = DatabaseConnection.executeQuery(sql, (category_id,))
+            return ResourceCategoryModel.fromDict(results[0]) if results else None
+        except sqlite3.Error as e:
+            raise DatabaseError(f"查询资源类型字典项失败: {e}")
+
+    def findCategoryByName(
+        self, resource_type: str, direction: str, name: str
+    ) -> Optional[ResourceCategoryModel]:
+        """
+        按「资源 + 方向 + 名称」查询字典项（含已停用）。
+
+        Args:
+            resource_type: 资源类型。
+            direction: 方向。
+            name: 类型名称。
+
+        Returns:
+            字典模型；不存在时返回 None。
+
+        Raises:
+            DatabaseError: 当查询失败时抛出。
+        """
+        sql = f"""
+            SELECT id, resource_type, direction, name, sort_order, is_active
+            FROM {self.CATEGORY_TABLE}
+            WHERE resource_type = ? AND direction = ? AND name = ?
+        """
+        try:
+            results = DatabaseConnection.executeQuery(sql, (resource_type, direction, name))
+            return ResourceCategoryModel.fromDict(results[0]) if results else None
+        except sqlite3.Error as e:
+            raise DatabaseError(f"查询资源类型字典项失败: {e}")
+
+    def countTransactionsByCategories(self, resource_type: str) -> Dict[Tuple[str, str], int]:
+        """
+        按「方向 + 类型名」统计明细笔数。
+
+        改名会同步明细，因此这里用名称关联；一次性聚合避免维护界面逐项查询。
+
+        Args:
+            resource_type: 资源类型。
+
+        Returns:
+            以 ``(direction, category)`` 为键、明细笔数为值的字典；无明细时为空字典。
+
+        Raises:
+            DatabaseError: 当查询失败时抛出。
+        """
+        sql = f"""
+            SELECT direction, category, COUNT(*) AS total
+            FROM {self.TRANSACTION_TABLE}
+            WHERE resource_type = ?
+            GROUP BY direction, category
+        """
+        try:
+            results = DatabaseConnection.executeQuery(sql, (resource_type,))
+        except sqlite3.Error as e:
+            raise DatabaseError(f"统计资源明细类型笔数失败: {e}")
+
+        return {
+            (row["direction"], row["category"]): int(row["total"] or 0)
+            for row in results
+        }
 
     def countDaily(self, resource_type: str) -> int:
         """
@@ -682,3 +770,156 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
                 own.execute(sql, params)
         except sqlite3.Error as e:
             raise DatabaseError(f"重算资源末次记录时刻失败: {e}")
+
+    # ---------------------------------------------------------------- 类型字典写入
+
+    def insertCategory(
+        self, record: ResourceCategoryModel, conn: Optional[sqlite3.Connection] = None
+    ) -> int:
+        """
+        新增一个类型字典项。
+
+        Args:
+            record: 字典模型实例。
+            conn: 可选的调用方连接。
+
+        Returns:
+            新记录的 ID。
+
+        Raises:
+            DatabaseError: 当插入失败（如名称重复）时抛出。
+        """
+        sql = f"""
+            INSERT INTO {self.CATEGORY_TABLE}
+                (resource_type, direction, name, sort_order, is_active)
+            VALUES (?, ?, ?, ?, ?)
+        """
+        params = (
+            record.resource_type, record.direction, record.name,
+            record.sort_order, int(record.is_active),
+        )
+        try:
+            if conn is not None:
+                return conn.execute(sql, params).lastrowid
+            with self._getConnection() as own:
+                return own.execute(sql, params).lastrowid
+        except sqlite3.Error as e:
+            raise DatabaseError(f"新增资源类型失败: {e}")
+
+    def updateCategoryName(
+        self, category_id: int, name: str, conn: Optional[sqlite3.Connection] = None
+    ) -> bool:
+        """
+        修改类型字典项的名称。
+
+        只改字典本身；已有关联明细的同步由调用方（Service）在同一个事务里
+        另行调用 :meth:`updateTransactionCategory`。
+
+        Args:
+            category_id: 字典项 ID。
+            name: 新名称。
+            conn: 可选的调用方连接。
+
+        Returns:
+            是否有行被更新。
+
+        Raises:
+            DatabaseError: 当更新失败（如名称重复）时抛出。
+        """
+        sql = f"UPDATE {self.CATEGORY_TABLE} SET name = ? WHERE id = ?"
+        params = (name, category_id)
+        try:
+            if conn is not None:
+                return conn.execute(sql, params).rowcount > 0
+            return DatabaseConnection.executeUpdate(sql, params) > 0
+        except sqlite3.Error as e:
+            raise DatabaseError(f"修改资源类型名称失败: {e}")
+
+    def updateTransactionCategory(
+        self,
+        resource_type: str,
+        direction: str,
+        old_name: str,
+        new_name: str,
+        conn: Optional[sqlite3.Connection] = None,
+    ) -> int:
+        """
+        把历史明细的来源名从旧名同步为新名。
+
+        Args:
+            resource_type: 资源类型。
+            direction: 方向。
+            old_name: 原类型名。
+            new_name: 新类型名。
+            conn: 可选的调用方连接。
+
+        Returns:
+            被同步的明细行数。
+
+        Raises:
+            DatabaseError: 当更新失败时抛出。
+        """
+        sql = f"""
+            UPDATE {self.TRANSACTION_TABLE}
+               SET category = ?, updated_at = datetime('now', 'localtime')
+             WHERE resource_type = ? AND direction = ? AND category = ?
+        """
+        params = (new_name, resource_type, direction, old_name)
+        try:
+            if conn is not None:
+                return conn.execute(sql, params).rowcount
+            return DatabaseConnection.executeUpdate(sql, params)
+        except sqlite3.Error as e:
+            raise DatabaseError(f"同步资源明细类型名失败: {e}")
+
+    def updateCategoryActive(
+        self, category_id: int, is_active: bool, conn: Optional[sqlite3.Connection] = None
+    ) -> bool:
+        """
+        启用 / 停用一个类型字典项。
+
+        Args:
+            category_id: 字典项 ID。
+            is_active: True 启用，False 停用。
+            conn: 可选的调用方连接。
+
+        Returns:
+            是否有行被更新。
+
+        Raises:
+            DatabaseError: 当更新失败时抛出。
+        """
+        sql = f"UPDATE {self.CATEGORY_TABLE} SET is_active = ? WHERE id = ?"
+        params = (1 if is_active else 0, category_id)
+        try:
+            if conn is not None:
+                return conn.execute(sql, params).rowcount > 0
+            return DatabaseConnection.executeUpdate(sql, params) > 0
+        except sqlite3.Error as e:
+            raise DatabaseError(f"修改资源类型启用状态失败: {e}")
+
+    def updateCategorySortOrders(
+        self, entries: List[Tuple[int, int]], conn: Optional[sqlite3.Connection] = None
+    ) -> None:
+        """
+        批量写入排序序号（用于上移 / 下移后的整组重排）。
+
+        Args:
+            entries: ``(字典项 ID, sort_order)`` 列表。
+            conn: 可选的调用方连接。
+
+        Raises:
+            DatabaseError: 当写入失败时抛出。
+        """
+        if not entries:
+            return
+        sql = f"UPDATE {self.CATEGORY_TABLE} SET sort_order = ? WHERE id = ?"
+        params = [(sort_order, category_id) for category_id, sort_order in entries]
+        try:
+            if conn is not None:
+                conn.executemany(sql, params)
+                return
+            with self._getConnection() as own:
+                own.executemany(sql, params)
+        except sqlite3.Error as e:
+            raise DatabaseError(f"更新资源类型排序失败: {e}")

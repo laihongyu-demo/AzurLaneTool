@@ -94,7 +94,9 @@ class ResourceCategoryModel(BaseModel):
         resource_type: 资源类型，``cube`` 或 ``red_gem``。
         direction: 方向，``income`` 或 ``expense``。
         name: 事件名称。
-        sort_order: 排序序号。
+        sort_order: 排序序号，越小越靠前。
+        is_active: 是否启用（1 启用 / 0 停用）。停用后不出现在录入下拉，
+            历史明细仍按原名称保留。
     """
 
     id: Optional[int] = None
@@ -102,3 +104,4 @@ class ResourceCategoryModel(BaseModel):
     direction: str = RESOURCE_DIRECTION_INCOME
     name: str = ""
     sort_order: int = 0
+    is_active: int = 1

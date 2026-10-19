@@ -133,3 +133,8 @@ class ResourceManagementPanel(QWidget):
         """刷新界面数据。"""
         self._taskBoardPanel.refreshData()
         self._redGemEntryPanel.refreshState()
+
+    def refreshEntryCategories(self) -> None:
+        """类型字典变更后，刷新两个常规录入面板的类型下拉。"""
+        self._taskBoardPanel.refreshEntryCategories()
+        self._redGemEntryPanel.refreshCategories()

@@ -493,6 +493,10 @@ class CubeTaskBoardPanel(QWidget):
         self._periodLabel.setText(self._formatPeriodSummary(period_info, selected))
         self._entry_panel.refreshState()
 
+    def refreshEntryCategories(self) -> None:
+        """类型字典变化后，只刷新常规录入的类型下拉（不重渲染看板）。"""
+        self._entry_panel.refreshCategories()
+
     def _formatPeriodSummary(self, period_info: Dict, selected: Optional[date] = None) -> str:
         """
         生成顶部周期信息文案。
