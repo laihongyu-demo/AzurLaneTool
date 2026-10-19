@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from models.resource_model import ResourceDailyModel
 from repositories.resource_repository import ResourceRepository
+from utils import time_source
 from utils.constants import RESOURCE_DETAIL_MODE_DETAIL, RESOURCE_DISPLAY_NAMES
 from utils.db_schema import isMissingColumnError, isMissingTableError
 from utils.exceptions import DatabaseError
@@ -104,11 +105,16 @@ class ResourceCardView:
         text: 卡片数值文本（大概数值口径）。
         tooltip: 悬停提示（精确值 + 末次记录 + 日环比说明）。
         delta: 日环比结果；不可比时为 None。
+        badge_text: 角标文案；无角标时为空串。除数字角标外，也用于
+            「未记录」「无法比较」这类灰色状态。
+        badge_tone: 角标配色档位，``up`` / ``down`` / ``flat``。
     """
 
     text: str
     tooltip: str
     delta: Optional[ResourceDailyDelta] = None
+    badge_text: str = ""
+    badge_tone: str = ""
 
 
 class ResourceService:
@@ -270,48 +276,110 @@ class ResourceService:
             f"（末次记录 {self._formatRecordStamp(latest)}）"
         )
 
-        delta, note = self._buildDailyDelta(series)
-        return ResourceCardView(text, f"{tooltip}｜{note}", delta)
+        delta, note, badge_text, badge_tone = self._buildDailyDelta(series, time_source.today())
+        return ResourceCardView(
+            text, f"{tooltip}｜{note}", delta, badge_text, badge_tone
+        )
 
     def _buildDailyDelta(
-        self, series: List[Dict]
-    ) -> Tuple[Optional[ResourceDailyDelta], str]:
+        self, series: List[Dict], today: date
+    ) -> Tuple[Optional[ResourceDailyDelta], str, str, str]:
         """
-        按结余链最后两行计算日环比。
+        按「今天 vs 昨天」计算日环比角标。
 
-        只有最新日的**自然日前一天**也有记录时才算"较昨日"；断档时不拿更早的
-        记录冒充昨天，直接标注无法比较。
+        只有最新记录日就是今天、且昨天也有记录时才给出数字角标：
+        - 今天还没有记录：灰色「未记录」，tooltip 保留最近一次日环比；
+        - 今天有记录但昨天断档：灰色「无法比较」；
+        - 最新记录晚于今天（脏数据）：灰色「数据异常」。
 
         Args:
             series: :meth:`getBalanceSeries` 的结果。
+            today: 今天（由调用方传入，便于测试跨天）。
 
         Returns:
-            ``(环比结果或 None, 追加到 tooltip 的说明文案)``。
+            ``(环比结果或 None, 追加到 tooltip 的说明文案, 角标文案, 角标配色)``。
         """
         if len(series) < 2:
-            return None, "仅一天记录，无法比较"
+            latest_date = date.fromisoformat(series[-1][BALANCE_DATE])
+            if latest_date > today:
+                return (
+                    None,
+                    f"最新记录日期 {latest_date:%Y-%m-%d} 晚于今天，请检查数据",
+                    "数据异常",
+                    DELTA_TONE_FLAT,
+                )
+            if latest_date == today:
+                return None, "仅一天记录，无法比较", "无法比较", DELTA_TONE_FLAT
+            return (
+                None,
+                f"今日未记录｜仅一天记录（{latest_date:%Y-%m-%d}）",
+                "未记录",
+                DELTA_TONE_FLAT,
+            )
 
         latest = series[-1]
         previous = series[-2]
         latest_date = date.fromisoformat(latest[BALANCE_DATE])
         previous_date = date.fromisoformat(previous[BALANCE_DATE])
-        if latest_date - previous_date != timedelta(days=1):
-            return None, f"昨日（{latest_date - timedelta(days=1):%Y-%m-%d}）无记录，无法比较"
-
+        latest_balance = int(latest[BALANCE_VALUE])
+        previous_balance = int(previous[BALANCE_VALUE])
         has_anchor = (
             latest.get(BALANCE_OVERRIDE) is not None
             or previous.get(BALANCE_OVERRIDE) is not None
         )
+        anchor_note = "（含手填结余）" if has_anchor else ""
+        consecutive = latest_date - previous_date == timedelta(days=1)
+
+        if latest_date > today:
+            return (
+                None,
+                f"最新记录日期 {latest_date:%Y-%m-%d} 晚于今天，请检查数据",
+                "数据异常",
+                DELTA_TONE_FLAT,
+            )
+
+        if latest_date != today:
+            if consecutive:
+                last_delta = latest_balance - previous_balance
+                if last_delta == 0:
+                    last_text = (
+                        f"持平（{latest_date:%Y-%m-%d}、{previous_date:%Y-%m-%d} "
+                        f"均为 {formatExact(latest_balance)}）"
+                    )
+                else:
+                    last_text = (
+                        f"{last_delta:+d}（{previous_date:%Y-%m-%d} "
+                        f"{formatExact(previous_balance)} → "
+                        f"{latest_date:%Y-%m-%d} {formatExact(latest_balance)}）"
+                    )
+                note = (
+                    f"今日未记录｜最近一次日环比 {latest_date:%Y-%m-%d} "
+                    f"{last_text}{anchor_note}"
+                )
+            else:
+                note = (
+                    f"今日未记录｜最近记录 {latest_date:%Y-%m-%d}，"
+                    f"与上一记录日 {previous_date:%Y-%m-%d} 不连续"
+                )
+            return None, note, "未记录", DELTA_TONE_FLAT
+
+        if not consecutive:
+            return (
+                None,
+                f"今日有记录，但昨日（{today - timedelta(days=1):%Y-%m-%d}）无记录，无法比较",
+                "无法比较",
+                DELTA_TONE_FLAT,
+            )
+
         delta = ResourceDailyDelta(
-            delta=int(latest[BALANCE_VALUE]) - int(previous[BALANCE_VALUE]),
+            delta=latest_balance - previous_balance,
             latest_date=latest[BALANCE_DATE],
             previous_date=previous[BALANCE_DATE],
-            latest_balance=int(latest[BALANCE_VALUE]),
-            previous_balance=int(previous[BALANCE_VALUE]),
+            latest_balance=latest_balance,
+            previous_balance=previous_balance,
             has_anchor=has_anchor,
         )
 
-        anchor_note = "（含手填结余）" if has_anchor else ""
         if delta.delta == 0:
             note = (
                 f"与昨日持平（{delta.previous_date}、{delta.latest_date} "
@@ -323,7 +391,7 @@ class ResourceService:
                 f"（{delta.previous_date} {formatExact(delta.previous_balance)} → "
                 f"{delta.latest_date} {formatExact(delta.latest_balance)}）{anchor_note}"
             )
-        return delta, note
+        return delta, note, delta.display_text, delta.tone
 
     def getCardText(self, resource_type: str) -> str:
         """
