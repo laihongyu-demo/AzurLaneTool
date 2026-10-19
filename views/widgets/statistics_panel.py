@@ -15,7 +15,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from services.statistics_service import StatisticsService
 from services.user_service import UserService
 from services.commander_service import CommanderService
-from services.resource_service import ResourceService
+from services.resource_service import DELTA_TONE_FLAT, ResourceService
 from services.mental_calculation_service import MentalCalculationService, MentalCalculationResult
 from utils import time_source
 from utils.constants import RESOURCE_TYPE_CUBE, RESOURCE_TYPE_RED_GEM
@@ -210,14 +210,22 @@ class StatisticsPanel(QWidget):
         """
         页签激活 / 跨天检查。
 
-        跨天时只有「执勤天数」会随日期变化；魔方 / 红尖尖卡与指级效率都以
-        最新记录为右端点，不应因时钟变化重扫结余链。
+        跨天时「执勤天数」会变化；资源卡角标也要从昨天的数字切成
+        「未记录」/「无法比较」（#25），因此额外刷新一次两张卡。
+        同日重复激活不查库。
         """
-        if time_source.today() != self._last_seen_date:
-            self.refreshDateSensitive()
+        if time_source.today() == self._last_seen_date:
+            return
+
+        self.refreshDateSensitive()
+        try:
+            self.updateResourceStats()
+        except Exception:
+            self._cubeCard.setValue("错误")
+            self._redGemCard.setValue("错误")
 
     def refreshDateSensitive(self) -> None:
-        """只刷新日期敏感项（执勤天数），不重算数据卡片。"""
+        """只刷新日期敏感项（执勤天数），不重算统计聚合。"""
         self._last_seen_date = time_source.today()
         try:
             self._dutyDaysCard.setValue(self._user_service.getDutyDaysText())
@@ -391,10 +399,16 @@ class StatisticsPanel(QWidget):
             view = self._resource_service.getCardView(resource_type)
             card.setValue(view.text)
             card.setToolTip(view.tooltip)
-            if view.delta is None:
-                card.clearBadge()
+            badge_text = view.badge_text
+            badge_tone = view.badge_tone
+            if not badge_text and view.delta is not None:
+                # 兼容只返回 delta 的旧调用方 / 测试桩
+                badge_text = view.delta.display_text
+                badge_tone = view.delta.tone
+            if badge_text:
+                card.setBadge(badge_text, badge_tone or DELTA_TONE_FLAT)
             else:
-                card.setBadge(view.delta.display_text, view.delta.tone)
+                card.clearBadge()
 
     def updateUnlockStats(self, unlock_stats: Dict[str, Any]) -> None:
         """

@@ -4,7 +4,7 @@
 覆盖：
 - 常规录入：自动态时刻跨天推进、未触碰控件时按点击瞬间写入、手动补录保持不变；
 - 魔方任务看板：记账日期自动前进、补录日期保留、刷新按钮不再级联统计刷新；
-- 数据看板：跨天只刷新执勤天数，不重算数据卡片；
+- 数据看板：跨天更新执勤天数与资源卡角标，不重算统计聚合；
 - 指级经验：时间与查询区间自动前进、手动值保留；
 - 主窗口：页签激活与跨天/窗口激活的轻量触发、午夜定时器只排一次。
 """
@@ -27,7 +27,7 @@ from PyQt5.QtWidgets import QApplication  # noqa: E402
 from services.commander_service import CommanderService  # noqa: E402
 from services.cube_task_service import CubeTaskService  # noqa: E402
 from services.resource_entry_service import ResourceEntryService  # noqa: E402
-from services.resource_service import ResourceCardView  # noqa: E402
+from services.resource_service import ResourceCardView, ResourceDailyDelta  # noqa: E402
 from utils.db_connection import DatabaseConnection  # noqa: E402
 from utils.db_schema import ensureResourceStatisticsSchema  # noqa: E402
 from views.dialogs.commander_exp_dialog import CommanderExpDialog  # noqa: E402
@@ -297,7 +297,11 @@ class _StubCommanderService:
 class _StubResourceService:
     """资源卡服务桩。"""
 
+    def __init__(self):
+        self.calls = 0
+
     def getCardView(self, _resource_type):
+        self.calls += 1
         return ResourceCardView("-", "", None)
 
 
@@ -308,39 +312,78 @@ class TestStatisticsDateSensitive(_TempDatabaseCase):
         with freeze_time(moment):
             user = _StubUserService()
             statistics = _StubStatisticsService()
+            resource = _StubResourceService()
             panel = StatisticsPanel(
                 statistics_service=statistics,
                 user_service=user,
                 commander_service=_StubCommanderService(),
-                resource_service=_StubResourceService(),
+                resource_service=resource,
             )
-        return panel, user, statistics
+        return panel, user, statistics, resource
 
-    def testDateChangeOnlyRefreshesDutyDays(self):
-        """跨天激活只更新执勤天数，不重算统计聚合。"""
+    def testDateChangeRefreshesDutyDaysAndResourceBadges(self):
+        """跨天激活更新执勤天数与资源卡角标，不重算统计聚合。"""
         base = datetime(2026, 10, 18, 23, 50, 0)
         next_day = datetime(2026, 10, 19, 0, 5, 0)
-        panel, user, statistics = self._buildPanel(base)
+        panel, user, statistics, resource = self._buildPanel(base)
         self.assertEqual(user.calls, 1)
         self.assertEqual(statistics.calls, 1)
+        self.assertEqual(resource.calls, 2)
 
         with freeze_time(next_day):
             panel.onActivated()
 
         self.assertEqual(user.calls, 2)
         self.assertEqual(statistics.calls, 1)
+        self.assertEqual(resource.calls, 4)
         self.assertEqual(panel._dutyDaysCard.value(), "2天")
 
     def testSameDayActivationDoesNotTouchServices(self):
         """同一天重复激活不查任何服务。"""
         base = datetime(2026, 10, 18, 23, 50, 0)
-        panel, user, statistics = self._buildPanel(base)
+        panel, user, statistics, resource = self._buildPanel(base)
 
         with freeze_time(base + timedelta(minutes=5)):
             panel.onActivated()
 
         self.assertEqual(user.calls, 1)
         self.assertEqual(statistics.calls, 1)
+        self.assertEqual(resource.calls, 2)
+
+
+class _BadgeResourceService:
+    """返回固定资源卡视图的服务桩。"""
+
+    def __init__(self, view):
+        self._view = view
+
+    def getCardView(self, _resource_type):
+        return self._view
+
+
+class TestResourceBadgeRendering(unittest.TestCase):
+    """资源卡角标状态（未记录 / 数字）的视图接线。"""
+
+    def _buildPanel(self, view):
+        return StatisticsPanel(
+            statistics_service=_StubStatisticsService(),
+            user_service=_StubUserService(),
+            commander_service=_StubCommanderService(),
+            resource_service=_BadgeResourceService(view),
+        )
+
+    def testNotRecordedBadgeShownGrey(self):
+        panel = self._buildPanel(ResourceCardView("4.1K", "tip", None, "未记录", "flat"))
+
+        self.assertEqual(panel._cubeCard.badgeText(), "未记录")
+        self.assertEqual(panel._cubeCard.badgeTone(), "flat")
+
+    def testDeltaFallbackStillWorks(self):
+        delta = ResourceDailyDelta(10, "2026-10-18", "2026-10-17", 4087, 4076)
+        panel = self._buildPanel(ResourceCardView("4.1K", "tip", delta))
+
+        self.assertEqual(panel._cubeCard.badgeText(), "↑10")
+        self.assertEqual(panel._cubeCard.badgeTone(), "up")
 
 
 class TestCommanderExpTime(_TempDatabaseCase):

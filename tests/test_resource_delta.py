@@ -1,11 +1,13 @@
 """
 资源卡片日环比角标单元测试。
 
-覆盖：上涨 / 下降 / 持平 / 断档 / 仅一天 / 锚点日 / 大额缩写 / 空数据，
-以及角标文案、方向档位与 tooltip 说明。
+覆盖：上涨 / 下降 / 持平 / 今日未记录 / 无法比较 / 未来数据 / 锚点日 /
+大额缩写 / 空数据，以及角标文案、方向档位与 tooltip 说明。
 """
 
 import unittest
+from datetime import date
+from unittest.mock import patch
 
 from models.resource_model import ResourceDailyModel
 from services.resource_service import (
@@ -68,7 +70,18 @@ def _service(entries) -> ResourceService:
     return ResourceService(_StubResourceRepository(rows, totals))
 
 
-class TestDeltaTone(unittest.TestCase):
+class _FixedTodayCase(unittest.TestCase):
+    """把「今天」固定为 2026-10-18，避免测试随真实日期漂移。"""
+
+    TODAY = date(2026, 10, 18)
+
+    def setUp(self):
+        patcher = patch("utils.time_source.today", return_value=self.TODAY)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+
+class TestDeltaTone(_FixedTodayCase):
     """上涨 / 下降 / 持平测试。"""
 
     def testRise(self):
@@ -128,25 +141,63 @@ class TestDeltaTone(unittest.TestCase):
         self.assertEqual(view.delta.display_text, "↑6,240")
 
 
-class TestDeltaEdges(unittest.TestCase):
+class TestDeltaEdges(_FixedTodayCase):
     """断档、仅一天、锚点与空数据测试。"""
 
     def testSingleDayHasNoBadge(self):
-        """只有一天记录时不给角标。"""
+        """只有今天一条记录时，角标显示「无法比较」。"""
         view = _service([("2026-10-18", 100, 0, None)]).getCardView(RESOURCE_TYPE_CUBE)
 
         self.assertIsNone(view.delta)
+        self.assertEqual(view.badge_text, "无法比较")
+        self.assertEqual(view.badge_tone, DELTA_TONE_FLAT)
         self.assertIn("仅一天记录", view.tooltip)
 
     def testGapHasNoBadge(self):
-        """昨日无记录时不给角标，也不拿更早的记录冒充昨天。"""
+        """今日有记录但昨日无记录时不给数字角标，也不拿更早的记录冒充昨天。"""
         view = _service([
             ("2026-10-16", 100, 0, None),
             ("2026-10-18", 50, 0, None),
         ]).getCardView(RESOURCE_TYPE_CUBE)
 
         self.assertIsNone(view.delta)
+        self.assertEqual(view.badge_text, "无法比较")
         self.assertIn("昨日（2026-10-17）无记录", view.tooltip)
+
+    def testNoTodayRecordShowsNotRecordedBadge(self):
+        """今天还没记录时，角标为「未记录」，tooltip 保留最近一次日环比。"""
+        with patch("utils.time_source.today", return_value=date(2026, 10, 19)):
+            view = _service([
+                ("2026-10-17", 4076, 0, None),
+                ("2026-10-18", 11, 0, None),
+            ]).getCardView(RESOURCE_TYPE_CUBE)
+
+        self.assertIsNone(view.delta)
+        self.assertEqual(view.badge_text, "未记录")
+        self.assertEqual(view.badge_tone, DELTA_TONE_FLAT)
+        self.assertIn("今日未记录", view.tooltip)
+        self.assertIn("最近一次日环比 2026-10-18 +11", view.tooltip)
+
+    def testFutureLatestShowsDataAnomaly(self):
+        """最新记录晚于今天时提示数据异常，而不是伪装成今日数据。"""
+        with patch("utils.time_source.today", return_value=date(2026, 10, 17)):
+            view = _service([
+                ("2026-10-17", 100, 0, None),
+                ("2026-10-18", 50, 0, None),
+            ]).getCardView(RESOURCE_TYPE_CUBE)
+
+        self.assertIsNone(view.delta)
+        self.assertEqual(view.badge_text, "数据异常")
+        self.assertIn("晚于今天", view.tooltip)
+
+    def testFutureSingleDayShowsDataAnomaly(self):
+        """只有一条未来记录时也提示数据异常。"""
+        with patch("utils.time_source.today", return_value=date(2026, 10, 17)):
+            view = _service([("2026-10-18", 100, 0, None)]).getCardView(RESOURCE_TYPE_CUBE)
+
+        self.assertIsNone(view.delta)
+        self.assertEqual(view.badge_text, "数据异常")
+        self.assertIn("晚于今天", view.tooltip)
 
     def testAnchorDayFlagged(self):
         """锚点日照常计算，tooltip 标注含手填结余。"""
