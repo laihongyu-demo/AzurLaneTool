@@ -433,6 +433,7 @@ class CommanderExpPanel(QWidget):
 
     def _onQueryClicked(self) -> None:
         """按日期区间查询事件处理。"""
+        self.syncTimeContext()
         start = self._startDateEdit.date().toString(QT_DATE_DISPLAY_FORMAT)
         end = self._endDateEdit.date().toString(QT_DATE_DISPLAY_FORMAT)
         if start > end:
