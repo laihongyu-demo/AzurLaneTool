@@ -106,6 +106,8 @@ AzurLaneTool/
 ## 规范与文档
 
 - 开发规范：[设计与开发规范文档.md](设计与开发规范文档.md)
+- Issue 模板：`.github/ISSUE_TEMPLATE/`（缺陷 / 功能 / 数据 / 杂项 / 文档）
+- 标签定义：`.github/labels.yml`
 - 现有设计与报告：`docs/`
 - 新文档命名：`docs/YYYYMMDD_主题.md`（旧文件保留原名，不追溯改名）
 - 分支与提交流程、权限与批量授权：见规范第 8 节

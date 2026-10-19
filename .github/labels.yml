@@ -1,0 +1,67 @@
+# GitHub 仓库标签定义（源文件）。
+# 应用方式：GitHub → Settings → Labels 手动新建/编辑，或用 gh/REST 按本文件同步。
+# 现有标签名保持不变，避免历史 issue 丢标签；新增 area-* 与 needs-decision。
+# 类型（至少一个）：bug / enhancement / performance / data-quality / documentation / chore
+# 优先级（必须一个）：priority-high / priority-medium / priority-low
+# 区域（至少一个）：area-ui / area-service / area-data / area-build / area-docs
+# 流程（可选）：needs-decision
+
+- name: bug
+  color: d73a4a
+  description: 程序错误、异常行为或数据错误
+
+- name: enhancement
+  color: a2eeef
+  description: 新功能或现有功能改进
+
+- name: performance
+  color: 1d76db
+  description: 性能、连接数、刷新耗时
+
+- name: data-quality
+  color: 6f42c1
+  description: 数据重复、错位、缺失或口径不一致
+
+- name: documentation
+  color: 0075ca
+  description: 文档、README、注释、规范
+
+- name: chore
+  color: bfd4f2
+  description: 构建、依赖、配置、清理等杂项
+
+- name: priority-high
+  color: b60205
+  description: 紧急：阻断使用或数据错误，优先处理
+
+- name: priority-medium
+  color: fbca04
+  description: 正常：按计划处理
+
+- name: priority-low
+  color: cfd3d7
+  description: 低：可延后，不阻断使用
+
+- name: area-ui
+  color: c2e0c6
+  description: 视图层：views/、控件、交互、样式
+
+- name: area-service
+  color: c2e0c6
+  description: 业务层：services/、校验、编排、计算
+
+- name: area-data
+  color: c2e0c6
+  description: 数据层：repositories/、models/、sql/、迁移
+
+- name: area-build
+  color: c2e0c6
+  description: 构建/依赖：build、requirements、打包、CI
+
+- name: area-docs
+  color: c2e0c6
+  description: 文档/规范：docs/、README、提示词
+
+- name: needs-decision
+  color: d4c5f9
+  description: 方案/口径待用户确认，确认前不实施
