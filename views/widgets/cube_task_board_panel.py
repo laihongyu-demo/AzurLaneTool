@@ -23,6 +23,7 @@ from PyQt5.QtWidgets import (
 from services.cube_task_service import (
     CubeTaskGroupView, CubeTaskService, CubeTaskState, CubeTaskWriteResult,
 )
+from utils import time_source
 from utils.constants import QT_DATE_DISPLAY_FORMAT, TASK_GROUP_DAILY, TASK_GROUP_WEEKLY
 from utils.exceptions import DatabaseError, ValidationError
 from views.widgets.regular_entry_panel import RegularEntryPanel
@@ -184,6 +185,8 @@ class CubeTaskBoardPanel(QWidget):
         self._state_by_code: Dict[str, CubeTaskState] = {}
         self._groups: List[CubeTaskGroupView] = []
         self._current_columns = 0
+        self._auto_date: Optional[date] = time_source.today()
+        self._syncing_date = False
 
         self._initUi()
         self._connectSignals()
@@ -231,10 +234,16 @@ class CubeTaskBoardPanel(QWidget):
         self._dateEdit = QDateEdit(self)
         self._dateEdit.setCalendarPopup(True)
         self._dateEdit.setDisplayFormat(QT_DATE_DISPLAY_FORMAT)
-        self._dateEdit.setDate(QDate.currentDate())
+        self._dateEdit.setDate(self._toQDate(self._auto_date))
+        self._dateEdit.setMaximumDate(self._toQDate(time_source.today()))
         self._dateEdit.setFixedWidth(120)
         self._dateEdit.setMaximumHeight(28)
         self._dateEdit.setToolTip("补录时切到记录发生的那一天，任务会归属该日期所在周期")
+
+        self._todayBtn = QPushButton("今天", self)
+        self._todayBtn.setFixedWidth(50)
+        self._todayBtn.setMaximumHeight(28)
+        self._todayBtn.setToolTip("把记账日期切回今天并刷新看板")
 
         self._refreshBtn = QPushButton("刷新", self)
         self._refreshBtn.setFixedWidth(70)
@@ -246,14 +255,54 @@ class CubeTaskBoardPanel(QWidget):
 
         header.addWidget(QLabel("记账日期:", self))
         header.addWidget(self._dateEdit)
+        header.addWidget(self._todayBtn)
         header.addWidget(self._refreshBtn)
         header.addSpacing(8)
         header.addWidget(self._periodLabel, 1)
         return header
 
+    def _toQDate(self, value: date) -> QDate:
+        """
+        Python 日期转 ``QDate``。
+
+        Args:
+            value: Python 日期。
+
+        Returns:
+            Qt 日期。
+        """
+        return QDate(value.year, value.month, value.day)
+
+    def _setSelectedDate(self, value: date) -> None:
+        """
+        程序化设置记账日期（不触发用户改动语义）。
+
+        Args:
+            value: 目标日期。
+        """
+        self._syncing_date = True
+        try:
+            self._dateEdit.setDate(self._toQDate(value))
+        finally:
+            self._syncing_date = False
+
+    def _syncMaximumDate(self, today: date) -> None:
+        """
+        把记账日期上限对齐到今天，避免选到未来。
+
+        Args:
+            today: 今天。
+        """
+        self._syncing_date = True
+        try:
+            self._dateEdit.setMaximumDate(self._toQDate(today))
+        finally:
+            self._syncing_date = False
+
     def _connectSignals(self) -> None:
         """连接信号与槽。"""
         self._refreshBtn.clicked.connect(self._onRefreshClicked)
+        self._todayBtn.clicked.connect(self._onTodayClicked)
         self._dateEdit.dateChanged.connect(self._onDateChanged)
         self._entry_panel.dataRefreshed.connect(self._onEntryDataRefreshed)
         self._entry_panel.entryRecorded.connect(self.entryResult.emit)
@@ -277,25 +326,80 @@ class CubeTaskBoardPanel(QWidget):
         """
         计算完成时刻：所选日期 + 当前时分秒。
 
-        选择今天时直接用当前时间；补录历史日期时保留当前时分秒，便于区分同一天的多笔记录。
+        自动态直接用点击瞬间的当前时间（即使控件因长时间未刷新仍显示昨天，
+        写入也不会落到昨天）；手动选择的过去日期用于补录，保留当前时分秒。
 
         Returns:
             datetime。
         """
         selected = self._selectedDate()
-        now = datetime.now()
-        if selected == now.date():
-            return now.replace(microsecond=0)
-        return datetime.combine(selected, now.time().replace(microsecond=0))
+        now = time_source.now()
+        if self._auto_date is not None and selected == self._auto_date:
+            return now
+        return datetime.combine(selected, now.time())
+
+    def syncTimeContext(self) -> bool:
+        """
+        把「自动态」记账日期推进到今天，并同步时刻控件与日期上限。
+
+        只改控件，不查数据库；用户手动选择过的日期保持不变。
+
+        Returns:
+            记账日期是否发生了推进。
+        """
+        today = time_source.today()
+        self._syncMaximumDate(today)
+        self._entry_panel.syncTimeContext()
+        return self._advanceAutoDate(today)
+
+    def onActivated(self) -> None:
+        """页签激活 / 跨天检查：同步日期与时刻，必要时刷新当前周期。"""
+        today = time_source.today()
+        self._syncMaximumDate(today)
+        self._entry_panel.onActivated()
+        if self._advanceAutoDate(today):
+            self.refreshData()
+
+    def _advanceAutoDate(self, today: date) -> bool:
+        """
+        自动态日期跨天时推进到今天。
+
+        Args:
+            today: 今天。
+
+        Returns:
+            是否推进了日期。
+        """
+        if self._auto_date is None or self._selectedDate() != self._auto_date:
+            return False
+        if today == self._auto_date:
+            return False
+
+        self._auto_date = today
+        self._setSelectedDate(today)
+        return True
 
     def _onDateChanged(self, _value: QDate) -> None:
-        """记账日期变化：刷新该周期的看板状态。"""
+        """记账日期变化：记录手动态并刷新该周期的看板状态。"""
+        if self._syncing_date:
+            return
+        selected = self._selectedDate()
+        # 手动选回今天时恢复自动跟随，明天零点可以继续自动前进
+        self._auto_date = selected if selected == time_source.today() else None
+        self.refreshData()
+
+    def _onTodayClicked(self) -> None:
+        """「今天」按钮：显式回到今天并刷新看板。"""
+        today = time_source.today()
+        self._auto_date = today
+        self._syncMaximumDate(today)
+        self._setSelectedDate(today)
         self.refreshData()
 
     def _onRefreshClicked(self) -> None:
-        """刷新按钮点击事件处理。"""
+        """刷新按钮点击事件处理：同步时间后只重渲染本地看板。"""
+        self.syncTimeContext()
         self.refreshData()
-        self.dataRefreshed.emit()
 
     def _onCompleteRequested(self, task_code: str) -> None:
         """完成请求事件处理。"""
@@ -386,21 +490,25 @@ class CubeTaskBoardPanel(QWidget):
             for group in self._groups for state in group.tasks
         }
         self._renderBoard()
-        self._periodLabel.setText(self._formatPeriodSummary(period_info))
+        self._periodLabel.setText(self._formatPeriodSummary(period_info, selected))
         self._entry_panel.refreshState()
 
-    def _formatPeriodSummary(self, period_info: Dict) -> str:
+    def _formatPeriodSummary(self, period_info: Dict, selected: Optional[date] = None) -> str:
         """
         生成顶部周期信息文案。
 
         Args:
             period_info: 周期类型 → CubePeriodInfo。
+            selected: 当前选择的记账日期；非今天时把「今日」改为「所选日」。
 
         Returns:
             形如 ``今日 2026-10-17｜本周 2026 第 42 周｜本月 2026-10｜本期 10-01 ~ 11-30``。
         """
+        day_prefix = "今日"
+        if selected is not None and selected != time_source.today():
+            day_prefix = "所选日"
         labels = []
-        names = {"day": "今日", "week": "本周", "month": "本月", "cruise": "本期"}
+        names = {"day": day_prefix, "week": "本周", "month": "本月", "cruise": "本期"}
         for period_type, prefix in names.items():
             info = period_info.get(period_type)
             if info is None:

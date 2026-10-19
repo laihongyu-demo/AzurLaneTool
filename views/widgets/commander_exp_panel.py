@@ -4,6 +4,7 @@
 提供指挥官等级快照的录入、查询、编辑与删除界面。
 """
 
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional
 
 from PyQt5.QtCore import QDate, QDateTime, Qt, pyqtSignal
@@ -15,6 +16,7 @@ from PyQt5.QtWidgets import (
 
 from models.commander_model import CommanderSnapshotModel
 from services.commander_service import CommanderService
+from utils import time_source
 from utils.constants import (
     COMMANDER_LEVEL_MAX, COMMANDER_LEVEL_MIN, COMMANDER_SNAPSHOT_RECENT_LIMIT,
     QT_DATE_DISPLAY_FORMAT, QT_DATETIME_DISPLAY_FORMAT,
@@ -25,6 +27,7 @@ from utils.unit_formatter import formatExact
 
 TABLE_HEADERS = ["时间", "等级", "当前经验", "本级所需", "进度"]
 ID_ROLE = Qt.UserRole
+DEFAULT_QUERY_RANGE_DAYS = 90
 
 
 class CommanderExpPanel(QWidget):
@@ -51,6 +54,10 @@ class CommanderExpPanel(QWidget):
         self._rows: Dict[int, Dict] = {}
         self._loading = False
         self._updating = False
+        self._auto_moment: Optional[datetime] = None
+        self._auto_start_date: Optional[date] = None
+        self._auto_end_date: Optional[date] = None
+        self._syncing_dates = False
 
         self._initUi()
         self._connectSignals()
@@ -92,7 +99,8 @@ class CommanderExpPanel(QWidget):
         self._timeEdit = QDateTimeEdit(self)
         self._timeEdit.setDisplayFormat(QT_DATETIME_DISPLAY_FORMAT)
         self._timeEdit.setCalendarPopup(True)
-        self._timeEdit.setDateTime(QDateTime.currentDateTime())
+        self._timeEdit.setDateTime(QDateTime(time_source.now()))
+        self._timeEdit.setMaximumDateTime(QDateTime(time_source.now()))
         self._timeEdit.setMinimumWidth(150)
         # 限定宽度：QDateTimeEdit 的 minimumSizeHint 约 300px，不封顶会把整行撑到 750px+。
         # 注意不能用 QSizePolicy.Ignored——布局会把列宽压到比控件还窄，控件就会互相重叠。
@@ -177,10 +185,18 @@ class CommanderExpPanel(QWidget):
             查询条件水平布局。
         """
         query = QHBoxLayout()
-        today = QDate.currentDate()
+        today = time_source.today()
+        self._auto_start_date = today - timedelta(days=DEFAULT_QUERY_RANGE_DAYS)
+        self._auto_end_date = today
 
-        self._startDateEdit = self._makeDateEdit(today.addDays(-90))
-        self._endDateEdit = self._makeDateEdit(today)
+        self._startDateEdit = self._makeDateEdit(self._toQDate(self._auto_start_date))
+        self._endDateEdit = self._makeDateEdit(self._toQDate(self._auto_end_date))
+        self._startDateEdit.dateChanged.connect(
+            lambda _value: self._onQueryDateChanged("start")
+        )
+        self._endDateEdit.dateChanged.connect(
+            lambda _value: self._onQueryDateChanged("end")
+        )
 
         self._queryBtn = self._makeButton("查询区间")
         self._recentBtn = self._makeButton(f"最近 {COMMANDER_SNAPSHOT_RECENT_LIMIT} 条")
@@ -196,6 +212,46 @@ class CommanderExpPanel(QWidget):
         self._countLabel.setStyleSheet("color: #666;")
         query.addWidget(self._countLabel)
         return query
+
+    def _toQDate(self, value: date) -> QDate:
+        """
+        Python 日期转 ``QDate``。
+
+        Args:
+            value: Python 日期。
+
+        Returns:
+            Qt 日期。
+        """
+        return QDate(value.year, value.month, value.day)
+
+    def _setQueryDate(self, edit: QDateEdit, value: date) -> None:
+        """
+        程序化设置查询日期（不视为用户手动态）。
+
+        Args:
+            edit: 日期控件。
+            value: 目标日期。
+        """
+        self._syncing_dates = True
+        try:
+            edit.setDate(self._toQDate(value))
+        finally:
+            self._syncing_dates = False
+
+    def _onQueryDateChanged(self, which: str) -> None:
+        """
+        用户改了查询日期：退出自动跟随。
+
+        Args:
+            which: ``start`` 或 ``end``。
+        """
+        if self._syncing_dates:
+            return
+        if which == "start":
+            self._auto_start_date = None
+        else:
+            self._auto_end_date = None
 
     def _makeDateEdit(self, value: QDate) -> QDateEdit:
         """
@@ -262,7 +318,10 @@ class CommanderExpPanel(QWidget):
         self._editing_id = None
         self._modeLabel.setText("新增记录")
         self._saveBtn.setText("保存快照")
-        self._timeEdit.setDateTime(QDateTime.currentDateTime())
+        moment = time_source.now()
+        self._auto_moment = moment
+        self._syncTimeLimit()
+        self._setTimeValue(moment)
 
         level = latest["commander_level"] if latest else 100
         self._loading = True
@@ -389,7 +448,7 @@ class CommanderExpPanel(QWidget):
         """保存快照事件处理：新增或更新。"""
         snapshot = CommanderSnapshotModel(
             id=self._editing_id,
-            statistics_date=self._timeEdit.dateTime().toString(QT_DATETIME_DISPLAY_FORMAT),
+            statistics_date=QDateTime(self._selectedMoment()).toString(QT_DATETIME_DISPLAY_FORMAT),
             commander_level=self._levelSpin.value(),
             commander_exp=self._expSpin.value(),
         )
@@ -454,6 +513,84 @@ class CommanderExpPanel(QWidget):
     def refreshData(self) -> None:
         """刷新历史列表（默认展示最近若干条）。"""
         self._loadRows(limit=COMMANDER_SNAPSHOT_RECENT_LIMIT)
+
+    def syncTimeContext(self) -> bool:
+        """
+        同步自动态时间、查询区间与时刻上限；编辑中或用户改过的值保持不变。
+
+        只改控件，不查数据库。
+
+        Returns:
+            是否有时间控件被更新。
+        """
+        now = time_source.now()
+        self._timeEdit.setMaximumDateTime(QDateTime(now))
+        if self._editing_id is not None:
+            return False
+
+        changed = False
+        if (
+            self._auto_moment is not None
+            and self._timeEdit.dateTime().toPyDateTime() == self._auto_moment
+            and now != self._auto_moment
+        ):
+            self._auto_moment = now
+            self._setTimeValue(now)
+            changed = True
+
+        today = time_source.today()
+        if (
+            self._auto_start_date is not None
+            and self._startDateEdit.date() == self._toQDate(self._auto_start_date)
+        ):
+            new_start = today - timedelta(days=DEFAULT_QUERY_RANGE_DAYS)
+            if new_start != self._auto_start_date:
+                self._auto_start_date = new_start
+                self._setQueryDate(self._startDateEdit, new_start)
+                changed = True
+
+        if (
+            self._auto_end_date is not None
+            and self._endDateEdit.date() == self._toQDate(self._auto_end_date)
+        ):
+            if today != self._auto_end_date:
+                self._auto_end_date = today
+                self._setQueryDate(self._endDateEdit, today)
+                changed = True
+
+        return changed
+
+    def onActivated(self) -> None:
+        """窗口显示 / 跨天检查：同步时间上下文并重新载入列表。"""
+        self.syncTimeContext()
+        if self._editing_id is not None:
+            return
+        self.refreshData()
+
+    def _setTimeValue(self, moment: datetime) -> None:
+        """
+        程序化设置快照时间。
+
+        Args:
+            moment: 目标时刻。
+        """
+        self._timeEdit.setDateTime(QDateTime(moment))
+
+    def _selectedMoment(self) -> datetime:
+        """
+        当前快照时间：自动态以点击「保存」的瞬间为准。
+
+        Returns:
+            Python datetime。
+        """
+        current = self._timeEdit.dateTime().toPyDateTime()
+        if self._auto_moment is not None and current == self._auto_moment:
+            return time_source.now()
+        return current
+
+    def _syncTimeLimit(self) -> None:
+        """把快照时间上限对齐到当前时间，避免选到未来。"""
+        self._timeEdit.setMaximumDateTime(QDateTime(time_source.now()))
 
     def _loadRows(
         self,

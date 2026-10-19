@@ -4,12 +4,11 @@
 提供用户相关的业务逻辑处理。
 """
 
-from datetime import datetime, date
 from typing import Optional
 
 from models.user_model import UserModel
 from repositories.user_repository import UserRepository
-from utils.exceptions import DatabaseError
+from utils import time_source
 from utils.unit_formatter import formatExact
 
 
@@ -55,7 +54,7 @@ class UserService:
         if start_date is None:
             return 0
 
-        today = date.today()
+        today = time_source.today()
         delta = today - start_date.date()
         return max(0, delta.days)
 

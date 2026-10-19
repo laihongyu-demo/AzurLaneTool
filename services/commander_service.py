@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple
 
 from models.commander_model import CommanderLevelExpModel, CommanderSnapshotModel
 from repositories.commander_repository import CommanderRepository
+from utils import time_source
 from utils.constants import (
     COMMANDER_LEVEL_MAX, COMMANDER_LEVEL_MIN, COMMANDER_SNAPSHOT_RECENT_LIMIT,
     EXP_EFFICIENCY_MIN_SAMPLES, EXP_EFFICIENCY_UNIT, EXP_EFFICIENCY_WINDOW_DAYS,
@@ -683,7 +684,7 @@ class CommanderService:
             ValidationError: 任一规则不满足时抛出。
         """
         parsed = self._parseStatisticsDate(snapshot.statistics_date)
-        if parsed > datetime.now():
+        if parsed > time_source.now():
             raise ValidationError("不能录入未来时间的快照")
 
         level = int(snapshot.commander_level)

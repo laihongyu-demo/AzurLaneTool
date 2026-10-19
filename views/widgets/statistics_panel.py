@@ -17,11 +17,12 @@ from services.user_service import UserService
 from services.commander_service import CommanderService
 from services.resource_service import ResourceService
 from services.mental_calculation_service import MentalCalculationService, MentalCalculationResult
-from views.dialogs.commander_exp_dialog import CommanderExpDialog
-from views.widgets.stat_card import StatCard
+from utils import time_source
 from utils.constants import RESOURCE_TYPE_CUBE, RESOURCE_TYPE_RED_GEM
 from utils.exceptions import DatabaseError
 from utils.unit_formatter import formatExact
+from views.dialogs.commander_exp_dialog import CommanderExpDialog
+from views.widgets.stat_card import StatCard
 
 
 class StatisticsPanel(QWidget):
@@ -61,6 +62,7 @@ class StatisticsPanel(QWidget):
         self._commander_service = commander_service or CommanderService()
         self._resource_service = resource_service or ResourceService()
         self._commanderDialog = None
+        self._last_seen_date = time_source.today()
         self._initUi()
         self._connectSignals()
         self.refreshData()
@@ -201,6 +203,27 @@ class StatisticsPanel(QWidget):
         self.refreshData()
         self.dataRefreshed.emit()
 
+    def syncTimeContext(self) -> None:
+        """数据看板没有可编辑的时间控件，保留统一接口供主窗口调用。"""
+
+    def onActivated(self) -> None:
+        """
+        页签激活 / 跨天检查。
+
+        跨天时只有「执勤天数」会随日期变化；魔方 / 红尖尖卡与指级效率都以
+        最新记录为右端点，不应因时钟变化重扫结余链。
+        """
+        if time_source.today() != self._last_seen_date:
+            self.refreshDateSensitive()
+
+    def refreshDateSensitive(self) -> None:
+        """只刷新日期敏感项（执勤天数），不重算数据卡片。"""
+        self._last_seen_date = time_source.today()
+        try:
+            self._dutyDaysCard.setValue(self._user_service.getDutyDaysText())
+        except Exception:
+            self._dutyDaysCard.setValue("错误")
+
     def _onCommanderLevelClicked(self) -> None:
         """
         指挥官等级卡片点击事件处理：打开「指级经验」独立窗口。
@@ -272,6 +295,7 @@ class StatisticsPanel(QWidget):
 
     def refreshData(self) -> None:
         """刷新统计数据。"""
+        self._last_seen_date = time_source.today()
         try:
             duty_days_text = self._user_service.getDutyDaysText()
             self._dutyDaysCard.setValue(duty_days_text)

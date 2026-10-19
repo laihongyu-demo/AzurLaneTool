@@ -83,6 +83,11 @@ class CommanderExpDialog(QDialog):
         """刷新面板数据。"""
         self._panel.refreshData()
 
+    def showEvent(self, event) -> None:
+        """窗口显示时同步自动态时间与查询区间。"""
+        super().showEvent(event)
+        self._panel.onActivated()
+
     def closeEvent(self, event) -> None:
         """关闭窗口。
 
