@@ -12,7 +12,7 @@ pip install -r requirements.txt
 
 echo.
 echo [2/3] Running code checks...
-python -m flake8 --exclude=build,dist,venv .
+python -m flake8 .
 
 echo.
 echo [3/3] Building executable...

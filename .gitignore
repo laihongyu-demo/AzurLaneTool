@@ -28,6 +28,8 @@ data/user.json
 build/
 dist/
 *.spec
+# build.spec 是项目构建配置，必须跟踪；上面的 *.spec 只忽略临时/生成的 spec
+!build.spec
 
 # 测试覆盖率
 .coverage
