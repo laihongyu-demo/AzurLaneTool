@@ -11,6 +11,7 @@
 任务卡片的完成/取消由看板自己负责，不会被这个按钮误伤。
 """
 
+from datetime import datetime
 from typing import Optional
 
 from PyQt5.QtCore import QDateTime, pyqtSignal
@@ -22,6 +23,7 @@ from PyQt5.QtWidgets import (
 from services.resource_entry_service import (
     MAX_ENTRY_AMOUNT, ResourceCategoryOption, ResourceEntryResult, ResourceEntryService,
 )
+from utils import time_source
 from utils.constants import (
     QT_RECORD_TIME_DISPLAY_FORMAT,
     RESOURCE_DIRECTION_NAMES,
@@ -61,6 +63,8 @@ class RegularEntryPanel(QWidget):
         super().__init__(parent)
         self._entry_service = entry_service or ResourceEntryService()
         self._resource_type = resource_type
+        self._auto_moment: Optional[datetime] = time_source.now()
+        self._undo_state_synced = False
 
         self._initUi()
         self._connectSignals()
@@ -96,7 +100,7 @@ class RegularEntryPanel(QWidget):
         self._timeEdit = QDateTimeEdit(self)
         self._timeEdit.setDisplayFormat(QT_RECORD_TIME_DISPLAY_FORMAT)
         self._timeEdit.setCalendarPopup(True)
-        self._timeEdit.setDateTime(QDateTime.currentDateTime())
+        self._timeEdit.setDateTime(QDateTime(self._auto_moment))
         self._timeEdit.setFixedWidth(180)
         self._timeEdit.setMaximumHeight(28)
         self._timeEdit.setToolTip("发生时刻，默认当前时间；可改到过去补录，不能晚于现在")
@@ -111,6 +115,11 @@ class RegularEntryPanel(QWidget):
         self._undoBtn.setMaximumHeight(28)
         self._undoBtn.setToolTip("删除最近一笔常规录入（不含任务卡片产生的记录）")
 
+        self._nowBtn = QPushButton("现在", self)
+        self._nowBtn.setFixedWidth(50)
+        self._nowBtn.setMaximumHeight(28)
+        self._nowBtn.setToolTip("把时刻切回当前时间并恢复自动跟随")
+
         layout.addWidget(QLabel("数量", self), 0, 0)
         layout.addWidget(self._amountSpin, 0, 1)
         layout.addWidget(QLabel("类型", self), 0, 2)
@@ -119,7 +128,8 @@ class RegularEntryPanel(QWidget):
         layout.addWidget(QLabel("时间", self), 1, 0)
         layout.addWidget(self._timeEdit, 1, 1, 1, 2)
         layout.addWidget(self._recordBtn, 1, 3)
-        layout.addWidget(self._undoBtn, 1, 4, 1, 2)
+        layout.addWidget(self._undoBtn, 1, 4)
+        layout.addWidget(self._nowBtn, 1, 5)
 
         layout.setColumnStretch(3, 1)
 
@@ -127,6 +137,7 @@ class RegularEntryPanel(QWidget):
         """连接信号与槽。"""
         self._recordBtn.clicked.connect(self._onRecordClicked)
         self._undoBtn.clicked.connect(self._onUndoClicked)
+        self._nowBtn.clicked.connect(self._onNowClicked)
 
     # --------------------------------------------------------------- 数据
 
@@ -153,9 +164,50 @@ class RegularEntryPanel(QWidget):
 
     def refreshState(self) -> None:
         """刷新类型、时刻上限与撤销状态（外部数据变化后调用）。"""
+        self.syncTimeContext()
         self.refreshCategories()
-        self._syncTimeLimit()
         self._syncUndoState()
+
+    def syncTimeContext(self) -> bool:
+        """
+        把「自动态」时刻同步到当前时间；用户改过的时刻保持不变。
+
+        只改控件，不查数据库。判定依据是控件值是否仍等于上次自动设置的值：
+        一旦用户手动改过（补录），控件值就不再等于哨兵，之后不再自动覆盖。
+
+        Returns:
+            是否更新了控件。
+        """
+        # 先抬高上限再改值，否则新时刻会被旧上限夹回旧值
+        moment = time_source.now()
+        self._timeEdit.setMaximumDateTime(QDateTime(moment))
+        if self._auto_moment is None:
+            return False
+        current = self._timeEdit.dateTime().toPyDateTime()
+        if current != self._auto_moment:
+            return False
+
+        if moment == self._auto_moment:
+            return False
+
+        self._auto_moment = moment
+        self._setTimeValue(moment)
+        return True
+
+    def onActivated(self) -> None:
+        """页签激活 / 跨天检查：同步自动态时刻与上限，按需刷新撤销态。"""
+        self.syncTimeContext()
+        if not self._undo_state_synced:
+            self._syncUndoState()
+
+    def _setTimeValue(self, moment: datetime) -> None:
+        """
+        程序化设置时刻控件。
+
+        Args:
+            moment: 目标时刻。
+        """
+        self._timeEdit.setDateTime(QDateTime(moment))
 
     def _findOption(self, target: ResourceCategoryOption) -> int:
         """
@@ -204,12 +256,25 @@ class RegularEntryPanel(QWidget):
         """
         当前选择的时刻。
 
+        若控件仍处于自动态（未手动改过），以点击「记录」的瞬间为准，
+        而不是构造时写入控件、之后可能已经过期的旧值。
+
         Returns:
             Python datetime。
         """
-        return self._timeEdit.dateTime().toPyDateTime()
+        current = self._timeEdit.dateTime().toPyDateTime()
+        if self._auto_moment is not None and current == self._auto_moment:
+            return time_source.now()
+        return current
 
     # --------------------------------------------------------------- 事件
+
+    def _onNowClicked(self) -> None:
+        """「现在」按钮：切回当前时间并恢复自动跟随。"""
+        moment = time_source.now()
+        self._auto_moment = moment
+        self._timeEdit.setMaximumDateTime(QDateTime(moment))
+        self._setTimeValue(moment)
 
     def _onRecordClicked(self) -> None:
         """记录按钮点击事件处理。"""
@@ -283,16 +348,34 @@ class RegularEntryPanel(QWidget):
         """
         self._syncTimeLimit()
         self._syncUndoState()
+        # 自动态写入后推进到当前时间；手动补录则保留用户选择，便于连续补记
+        if self._auto_moment is not None and self._selectedMomentIsAuto():
+            moment = time_source.now()
+            self._auto_moment = moment
+            self._timeEdit.setMaximumDateTime(QDateTime(moment))
+            self._setTimeValue(moment)
         # 先刷新数据、再回报结果：避免刷新过程中的状态栏文案覆盖操作提示
         self.dataRefreshed.emit()
         self.entryRecorded.emit(result)
 
+    def _selectedMomentIsAuto(self) -> bool:
+        """
+        控件当前值是否仍是自动态哨兵。
+
+        Returns:
+            仍为自动态时返回 True。
+        """
+        if self._auto_moment is None:
+            return False
+        return self._timeEdit.dateTime().toPyDateTime() == self._auto_moment
+
     def _syncTimeLimit(self) -> None:
         """把可选时刻上限对齐到当前时间，避免选到未来。"""
-        self._timeEdit.setMaximumDateTime(QDateTime.currentDateTime())
+        self._timeEdit.setMaximumDateTime(QDateTime(time_source.now()))
 
     def _syncUndoState(self) -> None:
         """按是否存在可撤销记录，启用/禁用撤销按钮。"""
+        self._undo_state_synced = True
         try:
             target = self._entry_service.getUndoableEntry(self._resource_type)
         except DatabaseError:
@@ -311,7 +394,6 @@ class RegularEntryPanel(QWidget):
         )
 
     def showEvent(self, event) -> None:
-        """面板显示时刷新时刻上限与撤销状态。"""
+        """面板显示时同步自动态时刻、上限与撤销状态。"""
         super().showEvent(event)
-        self._syncTimeLimit()
-        self._syncUndoState()
+        self.onActivated()

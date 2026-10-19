@@ -15,6 +15,7 @@ from typing import List, Optional
 from models.resource_model import ResourceTransactionModel
 from repositories.cube_task_repository import CubeTaskRepository
 from repositories.resource_repository import ResourceRepository
+from utils import time_source
 from utils.constants import (
     RECORD_TIME_FORMAT,
     RESOURCE_DETAIL_MODE_SUMMARY_ONLY,
@@ -272,7 +273,7 @@ class ResourceEntryService:
         Raises:
             ValidationError: 时刻晚于当前时间时抛出。
         """
-        if moment > datetime.now():
+        if moment > time_source.now():
             raise ValidationError("记录时刻不能晚于当前时间")
 
     def _validateTargetDay(self, resource_type: str, moment: datetime) -> None:

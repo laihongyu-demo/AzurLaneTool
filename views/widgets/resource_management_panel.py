@@ -119,6 +119,16 @@ class ResourceManagementPanel(QWidget):
         """任务看板写操作结果事件处理。"""
         self.taskResult.emit(result)
 
+    def onActivated(self) -> None:
+        """页签激活：同步两个看板的时间上下文，必要时刷新看板。"""
+        self._taskBoardPanel.onActivated()
+        self._redGemEntryPanel.onActivated()
+
+    def syncTimeContext(self) -> None:
+        """只同步时间控件（不查库），供全局刷新在重渲染前调用。"""
+        self._taskBoardPanel.syncTimeContext()
+        self._redGemEntryPanel.syncTimeContext()
+
     def refreshData(self) -> None:
         """刷新界面数据。"""
         self._taskBoardPanel.refreshData()

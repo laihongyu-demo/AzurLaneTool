@@ -4,12 +4,14 @@
 定义应用程序的主窗口界面。
 """
 
+from datetime import datetime, time as datetime_time, timedelta
+
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QStatusBar, QMenuBar, QMenu,
     QAction, QMessageBox, QTabWidget
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QEvent, Qt, QTimer
 from PyQt5.QtGui import QIcon
 
 from services.data_service import DataService
@@ -27,6 +29,7 @@ from services.resource_service import ResourceService
 from views.widgets.statistics_panel import StatisticsPanel
 from views.widgets.ship_management_panel import ShipManagementPanel
 from views.widgets.resource_management_panel import ResourceManagementPanel
+from utils import time_source
 from utils.constants import (
     WINDOW_DEFAULT_WIDTH, WINDOW_DEFAULT_HEIGHT, APP_NAME, APP_ICON_PATH
 )
@@ -84,11 +87,14 @@ class MainWindow(QMainWindow):
         self._commander_service = commander_service or CommanderService()
         self._cube_task_service = cube_task_service or CubeTaskService()
         self._resource_service = resource_service or ResourceService()
+        self._last_seen_date = time_source.today()
+        self._midnightTimer = None
 
         self._initUi()
         self._initMenuBar()
         self._initStatusBar()
         self._connectSignals()
+        self._initMidnightTimer()
 
     def _initUi(self) -> None:
         """初始化用户界面。"""
@@ -170,6 +176,7 @@ class MainWindow(QMainWindow):
 
     def _connectSignals(self) -> None:
         """连接信号与槽。"""
+        self._tabWidget.currentChanged.connect(self._onTabChanged)
         self._shipManagementPanel.dataRefreshed.connect(self._onShipManagementDataRefreshed)
         self._statisticsPanel.dataRefreshed.connect(self._onStatisticsDataRefreshed)
         self._statisticsPanel.commanderResult.connect(self._onCommanderSnapshotResult)
@@ -182,13 +189,88 @@ class MainWindow(QMainWindow):
         self._resourceManagementPanel.taskResult.connect(self._onCubeTaskResult)
         self._resourceManagementPanel.entryResult.connect(self._onResourceEntryResult)
 
+    def _initMidnightTimer(self) -> None:
+        """初始化跨天定时器：每天零点后触发一次，不做秒级轮询。"""
+        self._midnightTimer = QTimer(self)
+        self._midnightTimer.setSingleShot(True)
+        self._midnightTimer.timeout.connect(self._onMidnightTick)
+        self._scheduleMidnightTick()
+
+    def _scheduleMidnightTick(self) -> None:
+        """把单次定时器排到下一个零点之后。"""
+        if self._midnightTimer is None:
+            return
+        now = time_source.now()
+        next_midnight = datetime.combine(now.date() + timedelta(days=1), datetime_time.min)
+        delay_ms = int((next_midnight - now).total_seconds() * 1000) + 1000
+        delay_ms = max(1000, min(delay_ms, 24 * 60 * 60 * 1000))
+        self._midnightTimer.start(delay_ms)
+
+    def _onMidnightTick(self) -> None:
+        """零点触发：刷新当前页的时间上下文，并重排下一次。"""
+        try:
+            self._last_seen_date = time_source.today()
+            self._activatePanel(self._tabWidget.currentIndex())
+        finally:
+            self._scheduleMidnightTick()
+
+    def _onTabChanged(self, index: int) -> None:
+        """页签切换：只激活当前页，避免一次切换刷新所有面板。"""
+        self._last_seen_date = time_source.today()
+        self._activatePanel(index)
+
+    def _activatePanel(self, index: int) -> None:
+        """
+        调用指定页签的 ``onActivated``。
+
+        Args:
+            index: 页签下标。
+        """
+        if index < 0:
+            return
+        panel = self._tabWidget.widget(index)
+        if panel is None:
+            return
+        on_activated = getattr(panel, "onActivated", None)
+        if callable(on_activated):
+            on_activated()
+
+    def _panels(self):
+        """
+        当前三个页签面板。
+
+        Returns:
+            面板元组。
+        """
+        return (self._statisticsPanel, self._shipManagementPanel, self._resourceManagementPanel)
+
+    def _onWindowActivated(self) -> None:
+        """窗口重新激活：同步当前页时间；跨天时再补一次数据刷新。"""
+        if getattr(self, "_tabWidget", None) is None:
+            return
+        today = time_source.today()
+        date_changed = today != self._last_seen_date
+        self._last_seen_date = today
+        self._activatePanel(self._tabWidget.currentIndex())
+        if date_changed:
+            self._scheduleMidnightTick()
+
+    def showEvent(self, event) -> None:
+        """窗口显示时检查是否已经跨天。"""
+        super().showEvent(event)
+        self._onWindowActivated()
+
+    def changeEvent(self, event) -> None:
+        """窗口激活事件：兜底处理休眠恢复跨天。"""
+        super().changeEvent(event)
+        if event.type() == QEvent.WindowActivate:
+            self._onWindowActivated()
+
     def _onRefreshClicked(self) -> None:
         """刷新按钮点击事件处理。"""
         try:
             self._statusBar.showMessage("正在刷新数据...")
-            self._statisticsPanel.refreshData()
-            self._shipManagementPanel.refreshData()
-            self._resourceManagementPanel.refreshData()
+            self.refreshData()
             self._statusBar.showMessage("数据刷新完成")
         except Exception as e:
             self._statusBar.showMessage("刷新失败")
@@ -280,10 +362,13 @@ class MainWindow(QMainWindow):
         self._statusBar.showMessage("统计数据已更新")
 
     def refreshData(self) -> None:
-        """刷新界面数据。"""
+        """刷新界面数据：先同步时间上下文，再重算三页。"""
+        for panel in self._panels():
+            panel.syncTimeContext()
         self._statisticsPanel.refreshData()
         self._shipManagementPanel.refreshData()
         self._resourceManagementPanel.refreshData()
+        self._last_seen_date = time_source.today()
 
     def _showAbout(self) -> None:
         """显示关于对话框。"""

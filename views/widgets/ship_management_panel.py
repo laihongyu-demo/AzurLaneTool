@@ -129,6 +129,12 @@ class ShipManagementPanel(QWidget):
         """誓约结果事件处理。"""
         self.oathResult.emit(result)
 
+    def syncTimeContext(self) -> None:
+        """舰娘管理页签没有时间控件，保留统一接口。"""
+
+    def onActivated(self) -> None:
+        """舰娘管理页签没有时间相关状态，激活时不刷新。"""
+
     def refreshData(self) -> None:
         """刷新界面数据。"""
         self._unlockPanel.refreshData()

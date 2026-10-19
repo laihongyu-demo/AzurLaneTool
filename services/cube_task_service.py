@@ -14,6 +14,7 @@ from models.cube_task_model import CubeTaskCompletionModel, CubeTaskModel
 from models.resource_model import ResourceTransactionModel
 from repositories.cube_task_repository import CubeTaskRepository
 from repositories.resource_repository import ResourceRepository
+from utils import time_source
 from utils.constants import (
     CRUISE_PERIOD_MONTHS, RECORD_DATE_FORMAT, RECORD_TIME_FORMAT, RESOURCE_DIRECTION_INCOME,
     RESOURCE_TYPE_CUBE, TASK_DISPLAY_GROUPS, TASK_PERIOD_CRUISE, TASK_PERIOD_DAY,
@@ -432,8 +433,8 @@ class CubeTaskService:
             ValidationError: 任务不存在、时刻在未来或本期已完成时抛出。
             DatabaseError: 数据库写入失败时抛出。
         """
-        moment = at or datetime.now()
-        if moment > datetime.now():
+        moment = at or time_source.now()
+        if moment > time_source.now():
             raise ValidationError("不能录入未来的完成时刻")
 
         task = self._task_repository.findByCode(task_code)
