@@ -16,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt5.QtWidgets import QApplication, QMessageBox, QScrollArea  # noqa: E402
 
-from services.commander_service import CommanderService  # noqa: E402
+from services.commander_service import CommanderLevelBadge, CommanderService  # noqa: E402
 from services.cube_task_service import CubeTaskService  # noqa: E402
 from services.resource_service import ResourceCardView, ResourceDailyDelta, ResourceService  # noqa: E402
 from utils.db_connection import DatabaseConnection  # noqa: E402
@@ -259,17 +259,25 @@ class _StubUserService:
 class _StubCommanderService:
     """指挥官服务桩。"""
 
-    def __init__(self, text="-", tooltip="tip", efficiency_text="-", efficiency_tooltip="效率tip"):
+    def __init__(
+        self, text="-", tooltip="tip", efficiency_text="-", efficiency_tooltip="效率tip",
+        badge_text="", badge_tone="",
+    ):
         self._text = text
         self._tooltip = tooltip
         self._efficiency_text = efficiency_text
         self._efficiency_tooltip = efficiency_tooltip
+        self._badge_text = badge_text
+        self._badge_tone = badge_tone
 
     def getCommanderLevelCardText(self):
         return self._text
 
     def getCommanderLevelCardTooltip(self):
         return self._tooltip
+
+    def getCommanderLevelCardBadge(self):
+        return CommanderLevelBadge(self._badge_text, self._badge_tone)
 
     def getExpEfficiencyText(self):
         return self._efficiency_text
@@ -328,6 +336,7 @@ class TestStatisticsCardWiring(unittest.TestCase):
         self.assertEqual(panel._cubeCard.value(), "-")
         self.assertEqual(panel._redGemCard.value(), "-")
         self.assertEqual(panel._expEfficiencyCard.value(), "-")
+        self.assertEqual(panel._commanderLevelCard.titleBadgeText(), "")
         self.assertEqual(panel._cubeCard.badgeText(), "")
         self.assertEqual(panel._redGemCard.badgeText(), "")
 
@@ -365,6 +374,29 @@ class TestStatisticsCardWiring(unittest.TestCase):
         self.assertEqual(panel._cubeCard.toolTip(), "魔方tip")
         self.assertEqual(panel._redGemCard.toolTip(), "红尖尖tip")
 
+    def testCommanderCardShowsUpgradeBadge(self):
+        """指挥官等级卡展示服务层给出的标题角标。"""
+        panel = self._buildPanel(
+            commander_service=_StubCommanderService(
+                "163（77,057/354,350）", "指挥官tip",
+                badge_text="预计 27.7 天后升级", badge_tone="info",
+            ),
+        )
+
+        self.assertEqual(panel._commanderLevelCard.titleBadgeText(), "预计 27.7 天后升级")
+        self.assertEqual(panel._commanderLevelCard.titleBadgeTone(), "info")
+
+    def testCommanderCardHidesBadgeWithoutEstimate(self):
+        """服务层给不出估算时隐藏标题角标。"""
+        panel = self._buildPanel(
+            commander_service=_StubCommanderService(
+                "163（77,057/354,350）", "指挥官tip",
+                badge_text="", badge_tone="",
+            ),
+        )
+
+        self.assertEqual(panel._commanderLevelCard.titleBadgeText(), "")
+
     def testExpEfficiencyShowsServiceValue(self):
         """指级效率卡取服务层文本与口径提示。"""
         panel = self._buildPanel(
@@ -391,6 +423,18 @@ class TestStatisticsCardWiring(unittest.TestCase):
         self.assertEqual(panel._cubeCard.value(), "错误")
         self.assertEqual(panel._redGemCard.value(), "错误")
         self.assertEqual(panel._expEfficiencyCard.value(), "错误")
+
+    def testDatabaseErrorClearsCommanderBadge(self):
+        """统计服务异常时清掉可能残留的标题角标。"""
+        panel = self._buildPanel(
+            statistics_service=_FailingStatisticsService(),
+            commander_service=_StubCommanderService(
+                "163（77,057/354,350）", "指挥官tip",
+                badge_text="预计 27.7 天后升级", badge_tone="info",
+            ),
+        )
+
+        self.assertEqual(panel._commanderLevelCard.titleBadgeText(), "")
 
 
 class TestCommanderExpDialog(_TempDatabaseCase):

@@ -24,7 +24,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt5.QtCore import QDate  # noqa: E402
 from PyQt5.QtWidgets import QApplication  # noqa: E402
 
-from services.commander_service import CommanderService  # noqa: E402
+from services.commander_service import CommanderLevelBadge, CommanderService  # noqa: E402
 from services.cube_task_service import CubeTaskService  # noqa: E402
 from services.resource_entry_service import ResourceEntryService  # noqa: E402
 from services.resource_service import ResourceCardView, ResourceDailyDelta  # noqa: E402
@@ -286,6 +286,9 @@ class _StubCommanderService:
 
     def getCommanderLevelCardTooltip(self):
         return ""
+
+    def getCommanderLevelCardBadge(self):
+        return CommanderLevelBadge()
 
     def getExpEfficiencyText(self):
         return "-"

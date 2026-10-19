@@ -162,8 +162,8 @@ class TestCommanderCardText(unittest.TestCase):
         self.assertNotIn("354,350", tooltip)
         self.assertNotIn("本级需求", tooltip)
 
-    def testTooltipShowsUpgradeEstimateAfterProgress(self):
-        """预期升级时间排在进度之后、记录时间之前。"""
+    def testTooltipNoLongerShowsUpgradeEstimate(self):
+        """预计升级已迁到标题角标，tooltip 不再重复天数。"""
         repository = _StubCommanderRepository(
             snapshots=[
                 _snapshot(1, "2026-10-17 22:53", 163, 67057),
@@ -174,16 +174,94 @@ class TestCommanderCardText(unittest.TestCase):
         tooltip = CommanderService(repository).getCommanderLevelCardTooltip()
 
         # 两条快照相差 10,000 经验 / 1 天 → 10,000 每天；277,293 ÷ 10,000 = 27.7 天
-        self.assertIn("进度 21.7%｜预期升级 27.7 天｜记录于", tooltip)
+        self.assertIn("进度 21.7%｜记录于", tooltip)
+        self.assertNotIn("预期升级", tooltip)
+        self.assertNotIn("预计升级", tooltip)
+        self.assertNotIn("天后升级", tooltip)
+        self.assertNotIn("27.7 天", tooltip)
 
-    def testUpgradeEstimatePlaceholderWithoutEfficiency(self):
-        """只有一条快照、算不出效率时给出占位而不是省略。"""
+    def testTooltipExplainsMissingEfficiency(self):
+        """只有一条快照、算不出效率时，tooltip 说明角标为何缺失。"""
         repository = _StubCommanderRepository(
             snapshots=[_snapshot(1, "2026-10-18 22:53", 163, 77057)],
             requirements=REQUIREMENTS,
         )
+        service = CommanderService(repository)
 
-        self.assertIn("预期升级 —", CommanderService(repository).getCommanderLevelCardTooltip())
+        self.assertIn("暂无法预估升级天数（指级效率数据不足）", service.getCommanderLevelCardTooltip())
+        self.assertEqual(service.getCommanderLevelCardBadge().text, "")
+
+
+class TestCommanderCardBadge(unittest.TestCase):
+    """「指挥官等级」卡片标题角标测试。"""
+
+    def _service(self, snapshots, requirements=None):
+        """构造带指定快照的服务。"""
+        return CommanderService(
+            _StubCommanderRepository(
+                snapshots=snapshots,
+                requirements=requirements if requirements is not None else REQUIREMENTS,
+            )
+        )
+
+    def testBadgeShowsEstimatedDays(self):
+        """两条快照可算效率时，角标给出预计升级天数。"""
+        service = self._service([
+            _snapshot(1, "2026-10-17 22:53", 163, 67057),
+            _snapshot(2, "2026-10-18 22:53", 163, 77057),
+        ])
+
+        badge = service.getCommanderLevelCardBadge()
+
+        # 10,000 经验 / 天；277,293 ÷ 10,000 = 27.7 天
+        self.assertEqual(badge.text, "预计 27.7 天后升级")
+        self.assertEqual(badge.tone, "info")
+
+    def testBadgeShowsReadyWhenExpIsFull(self):
+        """未满级但本级经验已满时显示「可升级」，不误报满级。"""
+        service = self._service([_snapshot(1, "2026-10-18 22:53", 163, 354350)])
+
+        badge = service.getCommanderLevelCardBadge()
+
+        self.assertEqual(badge.text, "可升级")
+        self.assertEqual(badge.tone, "info")
+
+    def testBadgeShowsMaxLevel(self):
+        """达到最高等级时显示「已满级」，即使基准表没有 200 级行。"""
+        service = self._service([_snapshot(1, "2026-10-18 22:53", 200, 0)])
+
+        badge = service.getCommanderLevelCardBadge()
+
+        self.assertEqual(badge.text, "已满级")
+        self.assertEqual(badge.tone, "success")
+
+    def testBadgeHiddenWithoutEfficiency(self):
+        """只有一条快照、算不出效率时不显示角标。"""
+        service = self._service([_snapshot(1, "2026-10-18 22:53", 163, 77057)])
+
+        self.assertEqual(service.getCommanderLevelCardBadge().text, "")
+
+    def testBadgeHiddenWhenEfficiencyIsZero(self):
+        """两条快照经验不变、效率为 0 时不显示角标。"""
+        service = self._service([
+            _snapshot(1, "2026-10-17 22:53", 163, 77057),
+            _snapshot(2, "2026-10-18 22:53", 163, 77057),
+        ])
+
+        self.assertEqual(service.getCommanderLevelCardBadge().text, "")
+
+    def testBadgeHiddenWithoutSnapshot(self):
+        """无快照时不显示角标。"""
+        self.assertEqual(self._service([]).getCommanderLevelCardBadge().text, "")
+
+    def testBadgeHiddenWithoutRequirement(self):
+        """基准缺失、剩余经验未知时不显示角标。"""
+        service = self._service(
+            [_snapshot(1, "2026-10-18 22:53", 163, 77057)],
+            requirements={},
+        )
+
+        self.assertEqual(service.getCommanderLevelCardBadge().text, "")
 
 
 class TestCommanderSnapshotWrite(unittest.TestCase):

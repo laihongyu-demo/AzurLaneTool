@@ -354,6 +354,7 @@ class StatisticsPanel(QWidget):
     def _showError(self, message: str) -> None:
         """显示错误信息。"""
         self._commanderLevelCard.setValue("错误")
+        self._commanderLevelCard.clearTitleBadge()
         self._expEfficiencyCard.setValue("错误")
         self._cubeCard.setValue("错误")
         self._redGemCard.setValue("错误")
@@ -375,13 +376,19 @@ class StatisticsPanel(QWidget):
 
     def updateCommanderStats(self) -> None:
         """
-        更新指挥官等级 / 指级效率卡片与悬停提示。
+        更新指挥官等级 / 指级效率卡片、标题角标与悬停提示。
 
         精确数值口径：``等级（当前经验/需求经验）`` 与 ``日均经验/天``，固定加千分符；
-        无快照时服务层返回 ``-``，不抛异常。
+        指挥官等级卡的标题角标展示「预计 X 天后升级」（信息蓝 / 满级绿），无法估算时隐藏；
+        无快照时服务层返回 ``-`` / 空角标，不抛异常。
         """
         self._commanderLevelCard.setValue(self._commander_service.getCommanderLevelCardText())
         self._commanderLevelCard.setToolTip(self._commander_service.getCommanderLevelCardTooltip())
+        badge = self._commander_service.getCommanderLevelCardBadge()
+        if badge.text:
+            self._commanderLevelCard.setTitleBadge(badge.text, badge.tone)
+        else:
+            self._commanderLevelCard.clearTitleBadge()
         self._expEfficiencyCard.setValue(self._commander_service.getExpEfficiencyText())
         self._expEfficiencyCard.setToolTip(self._commander_service.getExpEfficiencyTooltip())
 

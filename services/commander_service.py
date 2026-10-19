@@ -23,6 +23,11 @@ from utils.db_schema import isMissingColumnError, isMissingTableError
 from utils.exceptions import DatabaseError, ValidationError
 from utils.unit_formatter import formatExact
 
+# 「指挥官等级」卡片标题角标的配色档位：
+# 预计升级 / 可升级是信息型（蓝），已满级是完成态（绿）。
+COMMANDER_BADGE_TONE_INFO = "info"
+COMMANDER_BADGE_TONE_SUCCESS = "success"
+
 
 @dataclass
 class CommanderWriteResult:
@@ -71,6 +76,20 @@ class CommanderLevelOverview:
     remaining_exp: Optional[int] = None
     progress_rate: Optional[float] = None
     snapshot_date: str = ""
+
+
+@dataclass
+class CommanderLevelBadge:
+    """
+    「指挥官等级」卡片标题角标。
+
+    Attributes:
+        text: 角标文案；不展示时为空串。
+        tone: 配色档位，``info``（预计 X 天后升级 / 可升级）/ ``success``（已满级）。
+    """
+
+    text: str = ""
+    tone: str = ""
 
 
 @dataclass
@@ -395,12 +414,31 @@ class CommanderService:
             f"（{formatExact(latest.commander_exp)}/{required_text}）"
         )
 
+    def getCommanderLevelCardBadge(self) -> CommanderLevelBadge:
+        """
+        生成「指挥官等级」卡片标题角标（预计 X 天后升级）。
+
+        预计升级按当前指级效率（近 30 天日均）估算；该信息已从 tooltip 迁到
+        卡片标题行，避免本就很长的「等级（当前经验/需求经验）」再被撑宽。
+        无快照、未满级但缺基准、或效率不足时返回空角标，由面板隐藏。
+
+        Returns:
+            角标文案与配色档位。
+        """
+        latest = self.getLatestSnapshot()
+        if latest is None:
+            return CommanderLevelBadge()
+
+        overview = self.getLevelOverview(latest.commander_level, latest.commander_exp)
+        return self._buildUpgradeBadge(latest.commander_level, overview.remaining_exp)
+
     def getCommanderLevelCardTooltip(self) -> str:
         """
         生成「指挥官等级」看板卡片悬停提示。
 
-        卡片本身已经展示「等级（当前经验/需求经验）」，所以提示里不再重复这三项，
-        只补充升级还差多少、进度、按当前效率预计还要多少天，以及记录时间。
+        卡片本身已经展示「等级（当前经验/需求经验）」，标题角标展示「预计 X 天后升级」，
+        所以提示里不再重复这些内容，只补充升级还差多少、进度、效率不足时的说明，
+        以及记录时间。
 
         Returns:
             提示文本。
@@ -417,34 +455,48 @@ class CommanderService:
             parts.append("升级所需经验未知（缺少该等级的基准数据）")
         if overview.progress_rate is not None:
             parts.append(f"进度 {overview.progress_rate:.1f}%")
-        estimate = self._formatUpgradeEstimate(overview.remaining_exp)
-        if estimate:
-            parts.append(estimate)
+        badge = self._buildUpgradeBadge(latest.commander_level, overview.remaining_exp)
+        if (
+            not badge.text
+            and latest.commander_level < COMMANDER_LEVEL_MAX
+            and overview.remaining_exp is not None
+            and overview.remaining_exp > 0
+        ):
+            # 角标给不出天数时，tooltip 保留原因，避免信息静默消失
+            parts.append("暂无法预估升级天数（指级效率数据不足）")
         parts.append(f"记录于 {latest.statistics_date}")
         return "｜".join(parts)
 
-    def _formatUpgradeEstimate(self, remaining_exp: Optional[int]) -> Optional[str]:
+    def _buildUpgradeBadge(
+        self, level: int, remaining_exp: Optional[int]
+    ) -> CommanderLevelBadge:
         """
-        按当前指级效率估算升级所需天数。
+        根据等级与剩余经验生成升级角标。
 
-        效率取「近 30 天日均」（与指级效率卡同源）；数据不足以算效率时给出占位，
-        而不是悄悄省略这一项。
+        满级判断优先于「剩余 0」：只有达到最高等级才显示「已满级」；未满级但
+        经验已满时显示「可升级」，避免把“可以升级”误报成满级。
 
         Args:
+            level: 指挥官等级。
             remaining_exp: 本级还差多少经验；None 表示基准缺失。
 
         Returns:
-            形如 ``预期升级 22.0 天`` 的片段；无法给出时返回占位或 None。
+            角标；无法估算时 ``text`` 为空串。
         """
+        if level >= COMMANDER_LEVEL_MAX:
+            return CommanderLevelBadge("已满级", COMMANDER_BADGE_TONE_SUCCESS)
         if remaining_exp is None:
-            return None
+            return CommanderLevelBadge()
         if remaining_exp <= 0:
-            return "已满级"
+            return CommanderLevelBadge("可升级", COMMANDER_BADGE_TONE_INFO)
 
         rate = self.getExpEfficiency().rate_per_day
         if not rate or rate <= 0:
-            return "预期升级 —"
-        return f"预期升级 {remaining_exp / rate:.1f} 天"
+            return CommanderLevelBadge()
+        return CommanderLevelBadge(
+            f"预计 {remaining_exp / rate:.1f} 天后升级",
+            COMMANDER_BADGE_TONE_INFO,
+        )
 
     # ----------------------------------------------------- 指级效率（#16）
 
