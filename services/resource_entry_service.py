@@ -2,7 +2,7 @@
 常规录入服务模块。
 
 承接「资源统计 → 魔方任务看板 → 常规录入」的手工记账：选择类型（收入 / 支出由类型
-字典决定）、数量与时刻，写入一笔明细并维护当日汇总。
+字典决定）、数量、时刻与可选备注，写入一笔明细并维护当日汇总。
 
 与任务看板的写入路径共用 `ResourceRepository`，但这类记录不产生完成记录，
 因此单独成服务，避免把「任务语义」混进通用记账里。
@@ -28,8 +28,11 @@ from utils.constants import (
 from utils.db_connection import DatabaseContext
 from utils.exceptions import ValidationError
 
-# 单笔数量上限：仅用于拦住误触输入，不限制真实玩法
-MAX_ENTRY_AMOUNT = 100000
+# 单笔数量上限：仅用于拦住误触输入，不限制真实玩法（与需求 D.2 / V-02 对齐）
+MAX_ENTRY_AMOUNT = 1_000_000
+
+# 单笔备注长度上限（与需求 D.2 对齐）
+MAX_NOTE_LENGTH = 200
 
 
 @dataclass
@@ -137,12 +140,13 @@ class ResourceEntryService:
             录入结果。
 
         Raises:
-            ValidationError: 当类型不存在、数量非法、时刻越界或目标日期属于历史汇总段时抛出。
+            ValidationError: 当类型不存在、数量非法、备注超长、时刻越界或目标日期属于历史汇总段时抛出。
         """
         self._validatePair(category, direction, resource_type)
         self._validateAmount(amount)
         self._validateMoment(moment)
         self._validateTargetDay(resource_type, moment)
+        note_text = self._normalizeNote(note)
 
         record_time_text = moment.strftime(RECORD_TIME_FORMAT)
         record_date_text = record_time_text[:10]
@@ -152,7 +156,7 @@ class ResourceEntryService:
             record_time=record_time_text,
             category=category,
             amount=amount,
-            note=note,
+            note=note_text,
         )
 
         with DatabaseContext(self._repository.dbPath) as conn:
@@ -275,6 +279,26 @@ class ResourceEntryService:
         """
         if moment > time_source.now():
             raise ValidationError("记录时刻不能晚于当前时间")
+
+    def _normalizeNote(self, note: str) -> str:
+        """
+        规范化备注：去除首尾空白并校验长度。
+
+        UI 已用 ``setMaxLength`` 限制，这里再校验一次，避免绕过界面直接调用服务写入超长备注。
+
+        Args:
+            note: 原始备注，可为 None 或空串。
+
+        Returns:
+            规范化后的备注文本。
+
+        Raises:
+            ValidationError: 备注超过 :data:`MAX_NOTE_LENGTH` 时抛出。
+        """
+        text = (note or "").strip()
+        if len(text) > MAX_NOTE_LENGTH:
+            raise ValidationError(f"备注不能超过 {MAX_NOTE_LENGTH} 字")
+        return text
 
     def _validateTargetDay(self, resource_type: str, moment: datetime) -> None:
         """

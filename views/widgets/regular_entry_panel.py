@@ -2,10 +2,11 @@
 常规录入面板模块。
 
 放在「魔方任务看板 → 常规录入」与「红尖尖任务看板 → 常规录入」分组里，用于补记
-非固定收支（活动建造、礼包、军事委托等）。表单只有三项：数量、类型、时刻，类型来自
-类型字典，方向由类型决定（同一名称可能两个方向都存在，因此按「类型 + 方向」落库）。
+非固定收支（活动建造、礼包、军事委托等）。表单有四项：数量、类型、时刻、备注（可选），
+类型来自类型字典，方向由类型决定（同一名称可能两个方向都存在，因此按「类型 + 方向」落库）。
 
 时刻默认取当前时间（精确到秒），可选择过去时间做补录，但不能晚于当前时间。
+备注只写入 ``resource_transaction.note``，暂不提供列表展示入口（见 #29）。
 
 另提供「撤销上一笔」：删除最近一笔**非任务来源**的录入，用于记错时回退；
 任务卡片的完成/取消由看板自己负责，不会被这个按钮误伤。
@@ -16,12 +17,13 @@ from typing import Optional
 
 from PyQt5.QtCore import QDateTime, pyqtSignal
 from PyQt5.QtWidgets import (
-    QComboBox, QDateTimeEdit, QGridLayout, QLabel, QMessageBox, QPushButton,
+    QComboBox, QDateTimeEdit, QGridLayout, QLabel, QLineEdit, QMessageBox, QPushButton,
     QSizePolicy, QSpinBox, QWidget,
 )
 
 from services.resource_entry_service import (
-    MAX_ENTRY_AMOUNT, ResourceCategoryOption, ResourceEntryResult, ResourceEntryService,
+    MAX_ENTRY_AMOUNT, MAX_NOTE_LENGTH, ResourceCategoryOption, ResourceEntryResult,
+    ResourceEntryService,
 )
 from utils import time_source
 from utils.constants import (
@@ -39,7 +41,7 @@ class RegularEntryPanel(QWidget):
     """
     常规录入表单。
 
-    只负责收集三项输入并调用 `ResourceEntryService`；写入 / 撤销结果通过信号交给
+    只负责收集四项输入并调用 `ResourceEntryService`；写入 / 撤销结果通过信号交给
     外层刷新看板卡片与状态栏。
     """
 
@@ -87,7 +89,7 @@ class RegularEntryPanel(QWidget):
         self._amountSpin = QSpinBox(self)
         self._amountSpin.setRange(1, MAX_ENTRY_AMOUNT)
         self._amountSpin.setValue(1)
-        self._amountSpin.setFixedWidth(90)
+        self._amountSpin.setFixedWidth(100)
         self._amountSpin.setMaximumHeight(28)
         self._amountSpin.setToolTip("本次记入的数量")
 
@@ -120,6 +122,12 @@ class RegularEntryPanel(QWidget):
         self._nowBtn.setMaximumHeight(28)
         self._nowBtn.setToolTip("把时刻切回当前时间并恢复自动跟随")
 
+        self._noteEdit = QLineEdit(self)
+        self._noteEdit.setMaxLength(MAX_NOTE_LENGTH)
+        self._noteEdit.setPlaceholderText(f"备注（可选，≤{MAX_NOTE_LENGTH} 字）")
+        self._noteEdit.setMaximumHeight(28)
+        self._noteEdit.setToolTip("本次记录的备注；暂不提供历史列表展示入口")
+
         layout.addWidget(QLabel("数量", self), 0, 0)
         layout.addWidget(self._amountSpin, 0, 1)
         layout.addWidget(QLabel("类型", self), 0, 2)
@@ -130,6 +138,9 @@ class RegularEntryPanel(QWidget):
         layout.addWidget(self._recordBtn, 1, 3)
         layout.addWidget(self._undoBtn, 1, 4)
         layout.addWidget(self._nowBtn, 1, 5)
+
+        layout.addWidget(QLabel("备注", self), 2, 0)
+        layout.addWidget(self._noteEdit, 2, 1, 1, 5)
 
         layout.setColumnStretch(3, 1)
 
@@ -291,6 +302,7 @@ class RegularEntryPanel(QWidget):
                 amount=self._amountSpin.value(),
                 moment=self._selectedMoment(),
                 resource_type=self._resource_type,
+                note=self._noteEdit.text(),
             )
         except ValidationError as e:
             QMessageBox.warning(self, "无法记录", str(e))
@@ -300,6 +312,7 @@ class RegularEntryPanel(QWidget):
             return
 
         self._afterWrite(result)
+        self._noteEdit.clear()
 
     def _onUndoClicked(self) -> None:
         """撤销按钮点击事件处理：确认后删除最近一笔常规录入。"""

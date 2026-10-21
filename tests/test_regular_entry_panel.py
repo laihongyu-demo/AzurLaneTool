@@ -1,7 +1,7 @@
 """
 常规录入面板单元测试。
 
-覆盖：类型下拉的加载与过滤、点击「记录」写入明细与信号、时刻默认值。
+覆盖：类型下拉的加载与过滤、点击「记录」写入明细与信号、时刻默认值、备注与数量上限。
 """
 
 import os
@@ -16,7 +16,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PyQt5.QtCore import QDateTime  # noqa: E402
 from PyQt5.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
-from services.resource_entry_service import ResourceEntryService  # noqa: E402
+from services.resource_entry_service import (  # noqa: E402
+    MAX_ENTRY_AMOUNT, MAX_NOTE_LENGTH, ResourceEntryService,
+)
 from utils.constants import (  # noqa: E402
     RESOURCE_DIRECTION_EXPENSE,
     RESOURCE_DIRECTION_INCOME,
@@ -109,6 +111,36 @@ class TestRegularEntryPanel(unittest.TestCase):
         self.assertEqual(len(recorded), 1)
         self.assertTrue(recorded[0].success)
         self.assertEqual(refreshed, [True])
+
+    def testAmountLimitAligned(self):
+        """数量框上限与服务常量一致。"""
+        panel = self._buildPanel()
+
+        self.assertEqual(panel._amountSpin.maximum(), MAX_ENTRY_AMOUNT)
+
+    def testNoteFieldRespectsMaxLength(self):
+        """备注框长度上限与需求一致，超长输入被截断。"""
+        panel = self._buildPanel()
+
+        self.assertEqual(panel._noteEdit.maxLength(), MAX_NOTE_LENGTH)
+        panel._noteEdit.setText("备" * (MAX_NOTE_LENGTH + 10))
+        self.assertEqual(len(panel._noteEdit.text()), MAX_NOTE_LENGTH)
+
+    def testRecordStoresNoteAndClearsInput(self):
+        """备注随明细写入，成功后清空输入框。"""
+        panel = self._buildPanel()
+        panel._typeCombo.setCurrentIndex(0)
+        panel._amountSpin.setValue(5)
+        panel._timeEdit.setDateTime(QDateTime(datetime.now() - timedelta(minutes=1)))
+        panel._noteEdit.setText("  活动池补记  ")
+
+        panel._recordBtn.click()
+
+        self.assertEqual(
+            self._query("SELECT note FROM resource_transaction"),
+            [("活动池补记",)],
+        )
+        self.assertEqual(panel._noteEdit.text(), "")
 
     def testTimeLimitBlocksFuture(self):
         """时刻控件的上限不晚于当前时间。"""

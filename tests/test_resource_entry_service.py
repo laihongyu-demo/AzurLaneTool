@@ -2,7 +2,7 @@
 常规录入服务单元测试。
 
 覆盖：可选类型过滤（排除任务看板覆盖的类型）、收入 / 支出记账、
-日汇总与末次时刻维护、数量与时刻校验、历史汇总段拦截。
+日汇总与末次时刻维护、数量与时刻校验、备注与数量上限、历史汇总段拦截。
 """
 
 import os
@@ -12,7 +12,9 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta
 
-from services.resource_entry_service import MAX_ENTRY_AMOUNT, ResourceEntryService
+from services.resource_entry_service import (
+    MAX_ENTRY_AMOUNT, MAX_NOTE_LENGTH, ResourceEntryService,
+)
 from utils.constants import (
     RESOURCE_DETAIL_MODE_SUMMARY_ONLY,
     RESOURCE_DIRECTION_EXPENSE,
@@ -192,6 +194,46 @@ class TestRecord(_TempEntryDatabaseCase):
             self._service.record(
                 "礼包", RESOURCE_DIRECTION_INCOME, MAX_ENTRY_AMOUNT + 1, self._moment()
             )
+
+    def testMaxAmountAccepted(self):
+        """数量上限本身允许写入。"""
+        result = self._service.record(
+            "礼包", RESOURCE_DIRECTION_INCOME, MAX_ENTRY_AMOUNT, self._moment()
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            self._query("SELECT amount FROM resource_transaction"),
+            [(MAX_ENTRY_AMOUNT,)],
+        )
+
+    def testNotePersistedAndTrimmed(self):
+        """备注去除首尾空白后写入明细。"""
+        self._service.record(
+            "活动建造", RESOURCE_DIRECTION_EXPENSE, 30, self._moment(),
+            note="  活动池补记  ",
+        )
+
+        self.assertEqual(
+            self._query("SELECT note FROM resource_transaction"),
+            [("活动池补记",)],
+        )
+
+    def testEmptyNoteStoredAsEmptyString(self):
+        """未填备注时落库为空串。"""
+        self._service.record("活动建造", RESOURCE_DIRECTION_EXPENSE, 30, self._moment())
+
+        self.assertEqual(self._query("SELECT note FROM resource_transaction"), [("",)])
+
+    def testOverlongNoteRejected(self):
+        """备注超过长度上限时拒绝写入。"""
+        with self.assertRaises(ValidationError):
+            self._service.record(
+                "活动建造", RESOURCE_DIRECTION_EXPENSE, 1, self._moment(),
+                note="备" * (MAX_NOTE_LENGTH + 1),
+            )
+
+        self.assertEqual(self._query("SELECT id FROM resource_transaction"), [])
 
     def testUnknownCategoryRejected(self):
         """未知类型被拒绝。"""
