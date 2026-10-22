@@ -13,6 +13,7 @@ from utils.sql_loader import loadSqlFile
 
 RESOURCE_SCHEMA_FILE = "CreateResourceStatisticsTables.sql"
 CUBE_TASK_SCHEMA_FILE = "CreateCubeTaskTables.sql"
+EVENT_SCHEMA_FILE = "CreateEventRecordTable.sql"
 CATEGORY_SEED_FILE = "SeedResourceCategories.sql"
 
 # 仅日期（yyyy-MM-dd）的写法长度；用于识别需要补时分秒的旧值
@@ -29,6 +30,9 @@ def ensureResourceStatisticsSchema(db_path: Optional[str] = None) -> None:
 
     - 明细的 ``record_date``（仅日期）→ ``record_time``（``yyyy-MM-dd HH:mm:ss``）
     - 日汇总补齐 ``last_record_time``（该日最后一笔的准确时刻）
+    - 明细补齐 ``event_id``（活动关联，可空）
+    - 活动记录的 ``draws``（抽数）重命名为 ``build_count``（建造次数）
+    - 活动记录补齐 ``build_cost`` / ``use_ticket`` / ``ticket_build_count``（单耗与券抽）
     - 类型字典补齐 ``is_active``（1 启用 / 0 停用）
     - 重建明细上的时间索引
 
@@ -45,14 +49,19 @@ def ensureResourceStatisticsSchema(db_path: Optional[str] = None) -> None:
     """
     resource_sql = loadSqlFile(RESOURCE_SCHEMA_FILE)
     task_sql = loadSqlFile(CUBE_TASK_SCHEMA_FILE)
+    event_sql = loadSqlFile(EVENT_SCHEMA_FILE)
     category_sql = loadSqlFile(CATEGORY_SEED_FILE)
     path = db_path or DatabaseConnection.getDbPath()
     with DatabaseContext(path) as conn:
         # 先升级旧结构：表不存在时各步骤自动跳过，不会误建/误改
         _upgradeLegacySchema(conn)
         _upgradeCubeTaskSchema(conn)
+        # event_id 必须先补列，随后资源脚本里的 event_id 索引才有列可建
+        _upgradeEventTransactionColumn(conn)
+        _upgradeEventRecordSchema(conn)
         conn.executescript(resource_sql)
         conn.executescript(task_sql)
+        conn.executescript(event_sql)
         _upgradeResourceCategorySchema(conn)
         # 类型字典仅在为空时播种；已有数据时不再改写顺序/名称/停用状态
         _seedCategoriesIfEmpty(conn, category_sql)
@@ -115,6 +124,54 @@ def _upgradeCubeTaskSchema(conn: sqlite3.Connection) -> None:
     columns = _tableColumns(conn, "cube_task")
     if columns and "short_name" not in columns:
         conn.execute("ALTER TABLE cube_task ADD COLUMN short_name TEXT NOT NULL DEFAULT ''")
+
+
+def _upgradeEventTransactionColumn(conn: sqlite3.Connection) -> None:
+    """
+    为明细补 ``event_id`` 列（活动记录关联，可空）。
+
+    新库由资源脚本直接建出该列；老库在这里补列，之后由脚本创建 ``event_id`` 索引。
+    必须在执行资源脚本之前调用，否则索引会因为列还不存在而失败。可重复执行。
+
+    Args:
+        conn: 数据库连接。
+    """
+    columns = _tableColumns(conn, "resource_transaction")
+    if columns and "event_id" not in columns:
+        conn.execute("ALTER TABLE resource_transaction ADD COLUMN event_id INTEGER")
+
+
+def _upgradeEventRecordSchema(conn: sqlite3.Connection) -> None:
+    """
+    升级活动记录表：旧列 ``draws`` 改名 ``build_count``，并补齐单耗 / 建造券字段。
+
+    - ``draws``（抽数）→ ``build_count``（建造次数），数据保留；
+    - ``build_cost``：单次消耗魔方数，旧数据默认 2；
+    - ``use_ticket``：是否使用建造券，旧数据默认 0；
+    - ``ticket_build_count``：券抽次数，旧数据为 NULL。
+
+    全部以列是否存在为前提，可重复执行。
+
+    Args:
+        conn: 数据库连接。
+    """
+    columns = _tableColumns(conn, "event_record")
+    if not columns:
+        return
+    if "draws" in columns and "build_count" not in columns:
+        conn.execute("ALTER TABLE event_record RENAME COLUMN draws TO build_count")
+        columns = _tableColumns(conn, "event_record")
+
+    if "build_cost" not in columns:
+        conn.execute(
+            "ALTER TABLE event_record ADD COLUMN build_cost INTEGER NOT NULL DEFAULT 2"
+        )
+    if "use_ticket" not in columns:
+        conn.execute(
+            "ALTER TABLE event_record ADD COLUMN use_ticket INTEGER NOT NULL DEFAULT 0"
+        )
+    if "ticket_build_count" not in columns:
+        conn.execute("ALTER TABLE event_record ADD COLUMN ticket_build_count INTEGER")
 
 
 def _upgradeResourceCategorySchema(conn: sqlite3.Connection) -> None:

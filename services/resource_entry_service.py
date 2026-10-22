@@ -12,11 +12,15 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Optional
 
+from models.event_model import EventOption
 from models.resource_model import ResourceTransactionModel
 from repositories.cube_task_repository import CubeTaskRepository
+from repositories.event_repository import EventRepository
 from repositories.resource_repository import ResourceRepository
 from utils import time_source
 from utils.constants import (
+    EVENT_BUILD_CATEGORY,
+    EVENT_DEFAULT_BUILD_COST,
     RECORD_TIME_FORMAT,
     RESOURCE_DETAIL_MODE_SUMMARY_ONLY,
     RESOURCE_DIRECTION_EXPENSE,
@@ -81,6 +85,7 @@ class ResourceEntryService:
         self,
         resource_repository: Optional[ResourceRepository] = None,
         task_repository: Optional[CubeTaskRepository] = None,
+        event_repository: Optional[EventRepository] = None,
     ):
         """
         初始化常规录入服务。
@@ -88,9 +93,11 @@ class ResourceEntryService:
         Args:
             resource_repository: 资源仓储实例。
             task_repository: 任务仓储实例（用于排除任务看板已覆盖的类型）。
+            event_repository: 活动记录仓储实例（用于活动关联校验与下拉）。
         """
         self._repository = resource_repository or ResourceRepository()
         self._task_repository = task_repository or CubeTaskRepository()
+        self._event_repository = event_repository or EventRepository()
 
     def getCategories(self, resource_type: str = RESOURCE_TYPE_CUBE) -> List[ResourceCategoryOption]:
         """
@@ -115,6 +122,24 @@ class ResourceEntryService:
                 options.append(ResourceCategoryOption(record.name, direction))
         return options
 
+    def getEventOptions(self) -> List[EventOption]:
+        """
+        查询「所属活动」下拉候选（按开始日期倒序）。
+
+        Returns:
+            活动选项列表；活动表缺失时由仓储转成 DatabaseError，由视图兜底。
+        """
+        return [
+            EventOption(
+                id=record.id,
+                event_date=record.event_date,
+                name=record.name,
+                status=record.status,
+                build_cost=record.build_cost,
+            )
+            for record in self._event_repository.findAll()
+        ]
+
     def record(
         self,
         category: str,
@@ -123,6 +148,7 @@ class ResourceEntryService:
         moment: datetime,
         resource_type: str = RESOURCE_TYPE_CUBE,
         note: str = "",
+        event_id: Optional[int] = None,
     ) -> ResourceEntryResult:
         """
         记录一笔常规收支。
@@ -135,16 +161,19 @@ class ResourceEntryService:
             moment: 发生时刻，不能晚于当前时间。
             resource_type: 资源类型。
             note: 备注，可为空。
+            event_id: 可选关联的活动记录 ID；只有「魔方 · 支出 · 活动建造」允许填写。
 
         Returns:
             录入结果。
 
         Raises:
-            ValidationError: 当类型不存在、数量非法、备注超长、时刻越界或目标日期属于历史汇总段时抛出。
+            ValidationError: 当类型不存在、数量非法、备注超长、时刻越界、目标日期属于历史汇总段，
+                或活动关联非法时抛出。
         """
         self._validatePair(category, direction, resource_type)
         self._validateAmount(amount)
         self._validateMoment(moment)
+        self._validateEventLink(category, direction, resource_type, event_id, amount)
         self._validateTargetDay(resource_type, moment)
         note_text = self._normalizeNote(note)
 
@@ -157,6 +186,7 @@ class ResourceEntryService:
             category=category,
             amount=amount,
             note=note_text,
+            event_id=event_id,
         )
 
         with DatabaseContext(self._repository.dbPath) as conn:
@@ -279,6 +309,50 @@ class ResourceEntryService:
         """
         if moment > time_source.now():
             raise ValidationError("记录时刻不能晚于当前时间")
+
+    def _validateEventLink(
+        self,
+        category: str,
+        direction: str,
+        resource_type: str,
+        event_id: Optional[int],
+        amount: int,
+    ) -> None:
+        """
+        校验活动关联与金额整除关系。
+
+        只有「魔方 · 支出 · 活动建造」允许关联活动；关联的 ID 必须真实存在，
+        并且金额必须是该活动单次消耗（1 / 2 魔方）的整数倍，否则建造次数无法折算。
+
+        Args:
+            category: 类型名称。
+            direction: 方向。
+            resource_type: 资源类型。
+            event_id: 活动记录 ID，可为 None。
+            amount: 本次数量（魔方数）。
+
+        Raises:
+            ValidationError: 关联了非法类型、活动不存在，或金额不是单耗整数倍时抛出。
+        """
+        if event_id is None:
+            return
+        if isinstance(event_id, bool) or not isinstance(event_id, int) or event_id <= 0:
+            raise ValidationError("所属活动无效")
+        if (
+            resource_type != RESOURCE_TYPE_CUBE
+            or direction != RESOURCE_DIRECTION_EXPENSE
+            or category != EVENT_BUILD_CATEGORY
+        ):
+            raise ValidationError("只有「支出 · 活动建造」可以关联活动")
+
+        event = self._event_repository.findById(event_id)
+        if event is None:
+            raise ValidationError(f"所属活动不存在：{event_id}")
+        cost = event.build_cost or EVENT_DEFAULT_BUILD_COST
+        if amount % cost != 0:
+            raise ValidationError(
+                f"「{event.displayName}」单次消耗 {cost} 魔方，数量需为 {cost} 的整数倍"
+            )
 
     def _normalizeNote(self, note: str) -> str:
         """

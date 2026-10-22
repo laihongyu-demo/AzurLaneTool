@@ -259,7 +259,7 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
 
         sql = f"""
             SELECT id, resource_type, direction, record_time, category, amount,
-                   note, created_at, updated_at
+                   note, event_id, created_at, updated_at
             FROM {self.TRANSACTION_TABLE}
             WHERE {' AND '.join(conditions)}
             ORDER BY record_time, id
@@ -288,7 +288,7 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
         """
         sql = f"""
             SELECT t.id, t.resource_type, t.direction, t.record_time, t.category,
-                   t.amount, t.note, t.created_at, t.updated_at
+                   t.amount, t.note, t.event_id, t.created_at, t.updated_at
             FROM {self.TRANSACTION_TABLE} t
             LEFT JOIN cube_task_completion c ON c.transaction_id = t.id
             WHERE t.resource_type = ? AND c.id IS NULL
@@ -596,12 +596,12 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
         """
         sql = f"""
             INSERT INTO {self.TRANSACTION_TABLE}
-                (resource_type, direction, record_time, category, amount, note)
-            VALUES (?, ?, ?, ?, ?, ?)
+                (resource_type, direction, record_time, category, amount, note, event_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
         """
         params = (
             record.resource_type, record.direction, record.record_time,
-            record.category, record.amount, record.note,
+            record.category, record.amount, record.note, record.event_id,
         )
         try:
             if conn is not None:
@@ -650,7 +650,7 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
         """
         sql = f"""
             SELECT id, resource_type, direction, record_time, category, amount,
-                   note, created_at, updated_at
+                   note, event_id, created_at, updated_at
             FROM {self.TRANSACTION_TABLE}
             WHERE id = ?
         """

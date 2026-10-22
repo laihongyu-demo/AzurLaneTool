@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS resource_transaction (
     category      TEXT NOT NULL,
     amount        INTEGER NOT NULL CHECK (amount > 0),
     note          TEXT NOT NULL DEFAULT '',
+    -- 可选关联活动记录；只有「支出 · 活动建造」会写入（见 #event）
+    event_id      INTEGER,
     created_at    TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     updated_at    TEXT
 );
@@ -59,6 +61,10 @@ CREATE TABLE IF NOT EXISTS commander_level_exp (
 
 CREATE INDEX IF NOT EXISTS idx_resource_transaction_time
     ON resource_transaction (resource_type, record_time);
+
+-- 活动记录的关联统计按 event_id 聚合，单独建索引
+CREATE INDEX IF NOT EXISTS idx_resource_transaction_event
+    ON resource_transaction (event_id);
 
 -- resource_daily 已有 UNIQUE (resource_type, record_date)，无需重复建索引。
 -- commander_info 的唯一索引由迁移脚本在时间规范化之后建立（见 tools/migrate_resource_statistics.py）。

@@ -26,9 +26,11 @@ from services.commander_service import CommanderService, CommanderWriteResult
 from services.cube_task_service import CubeTaskService, CubeTaskWriteResult
 from services.resource_service import ResourceService
 from services.resource_category_service import ResourceCategoryService
+from services.event_record_service import EventRecordService
 from views.widgets.statistics_panel import StatisticsPanel
 from views.widgets.ship_management_panel import ShipManagementPanel
 from views.widgets.resource_management_panel import ResourceManagementPanel
+from views.widgets.event_record_panel import EventRecordPanel
 from views.widgets.settings_panel import SettingsPanel
 from utils import time_source
 from utils.constants import (
@@ -57,7 +59,8 @@ class MainWindow(QMainWindow):
         commander_service: CommanderService = None,
         cube_task_service: CubeTaskService = None,
         resource_service: ResourceService = None,
-        category_service: ResourceCategoryService = None
+        category_service: ResourceCategoryService = None,
+        event_record_service: EventRecordService = None
     ):
         """
         初始化主窗口。
@@ -76,6 +79,7 @@ class MainWindow(QMainWindow):
             cube_task_service: 魔方任务看板服务实例。
             resource_service: 资源统计服务实例（只读）。
             category_service: 资源类型字典维护服务实例。
+            event_record_service: 活动记录服务实例。
         """
         super().__init__()
         self._data_service = data_service or DataService()
@@ -91,6 +95,7 @@ class MainWindow(QMainWindow):
         self._cube_task_service = cube_task_service or CubeTaskService()
         self._resource_service = resource_service or ResourceService()
         self._category_service = category_service or ResourceCategoryService()
+        self._event_record_service = event_record_service or EventRecordService()
         self._last_seen_date = time_source.today()
         self._midnightTimer = None
 
@@ -145,6 +150,9 @@ class MainWindow(QMainWindow):
             cube_task_service=self._cube_task_service
         )
         self._tabWidget.addTab(self._resourceManagementPanel, "资源统计")
+
+        self._eventRecordPanel = EventRecordPanel(self._event_record_service)
+        self._tabWidget.addTab(self._eventRecordPanel, "活动记录")
 
         self._settingsPanel = SettingsPanel(category_service=self._category_service)
         self._tabWidget.addTab(self._settingsPanel, "设置")
@@ -202,6 +210,8 @@ class MainWindow(QMainWindow):
         self._resourceManagementPanel.dataRefreshed.connect(self._onResourceDataRefreshed)
         self._resourceManagementPanel.taskResult.connect(self._onCubeTaskResult)
         self._resourceManagementPanel.entryResult.connect(self._onResourceEntryResult)
+        self._eventRecordPanel.dataChanged.connect(self._onEventRecordsChanged)
+        self._eventRecordPanel.resultReady.connect(self._onEventRecordResult)
         self._settingsPanel.categoriesChanged.connect(self._onCategoriesChanged)
         self._settingsPanel.resultReady.connect(self._onSettingsResult)
 
@@ -262,6 +272,7 @@ class MainWindow(QMainWindow):
             self._statisticsPanel,
             self._shipManagementPanel,
             self._resourceManagementPanel,
+            self._eventRecordPanel,
             self._settingsPanel,
         )
 
@@ -373,8 +384,24 @@ class MainWindow(QMainWindow):
         """
         常规录入结果事件处理。
 
+        关联了活动的明细会改变活动页的「关联魔方」，因此这里顺带刷新活动记录页。
+
         Args:
             result: `ResourceEntryResult` 实例。
+        """
+        self._statusBar.showMessage(result.toStatusBarMessage())
+        self._eventRecordPanel.refreshData()
+
+    def _onEventRecordsChanged(self) -> None:
+        """活动记录变化：让常规录入的「所属活动」下拉立即跟上。"""
+        self._resourceManagementPanel.refreshEntryEvents()
+
+    def _onEventRecordResult(self, result) -> None:
+        """
+        活动记录写操作结果事件处理。
+
+        Args:
+            result: `EventWriteResult` 实例。
         """
         self._statusBar.showMessage(result.toStatusBarMessage())
 
@@ -406,6 +433,7 @@ class MainWindow(QMainWindow):
         self._statisticsPanel.refreshData()
         self._shipManagementPanel.refreshData()
         self._resourceManagementPanel.refreshData()
+        self._eventRecordPanel.refreshData()
         self._settingsPanel.refreshData()
         self._last_seen_date = time_source.today()
 

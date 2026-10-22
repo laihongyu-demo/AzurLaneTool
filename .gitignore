@@ -12,6 +12,9 @@ __pycache__/
 # 本地用户数据（每台机器独立，不入库）
 data/user.json
 
+# 本地活动统计源文件（已导入数据库，不入库；需要时用导入脚本 --csv 指定）
+/event.csv
+
 # IDE 配置
 .vscode/
 .idea/

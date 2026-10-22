@@ -67,6 +67,7 @@ class ResourceTransactionModel(BaseModel):
         category: 来源 / 去向名称。
         amount: 数量，必须大于 0。
         note: 备注。
+        event_id: 可选关联的活动记录 ID；只有「支出 · 活动建造」会写入。
         created_at: 创建时间。
         updated_at: 更新时间。
     """
@@ -78,6 +79,7 @@ class ResourceTransactionModel(BaseModel):
     category: str = ""
     amount: int = 1
     note: str = ""
+    event_id: Optional[int] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 

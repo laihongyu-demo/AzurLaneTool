@@ -130,3 +130,36 @@ CRUISE_PERIOD_MONTHS = 2
 # 录入时写入明细的来源名（沿用历史事件名；签到类由历史「每日签到」改名为「每月签到」）
 TASK_CATEGORY_SIGNIN_LEGACY = "每日签到"
 TASK_CATEGORY_SIGNIN = "每月签到"
+
+# ---- 活动记录 ----
+#
+# 活动记录与魔方明细的关联口径：
+# - build_count（建造次数）是手工统计值，包含建造券抽，不能由魔方支出反推
+#   （历史平均 1.80 魔方/次）；
+# - resource_transaction.event_id 只用于汇总该活动的魔方支出与笔数。
+
+# 唯一允许关联活动记录的支出类型（魔方）
+EVENT_BUILD_CATEGORY = "活动建造"
+
+# 状态建议值：自由文本存储，用户可输入其它值；空串表示未标记
+EVENT_STATUS_GRADUATED = "毕业"
+EVENT_STATUS_MISSING = "缺"
+EVENT_STATUS_ONGOING = "进行中"
+EVENT_STATUS_OPTIONS = (EVENT_STATUS_GRADUATED, EVENT_STATUS_MISSING, EVENT_STATUS_ONGOING)
+
+# 单次建造消耗的魔方数：轻型 1，重型 / 特型 / 多数活动池 2
+EVENT_BUILD_COST_OPTIONS = (1, 2)
+EVENT_DEFAULT_BUILD_COST = 2
+
+# 展示兜底文案
+EVENT_UNNAMED_LABEL = "（未命名活动）"
+EVENT_STATUS_UNSET_LABEL = "未标记"
+EVENT_SELECTOR_NONE_LABEL = "（不关联活动）"
+
+# 字段长度与数量上限（仅拦截误输入）
+MAX_EVENT_NAME_LENGTH = 100
+MAX_EVENT_TYPE_LENGTH = 50
+MAX_EVENT_STATUS_LENGTH = 20
+MAX_EVENT_STATUS_NOTE_LENGTH = 200
+MAX_EVENT_NOTE_LENGTH = 200
+MAX_EVENT_BUILD_COUNT = 100_000

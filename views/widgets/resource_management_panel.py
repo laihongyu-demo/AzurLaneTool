@@ -138,3 +138,7 @@ class ResourceManagementPanel(QWidget):
         """类型字典变更后，刷新两个常规录入面板的类型下拉。"""
         self._taskBoardPanel.refreshEntryCategories()
         self._redGemEntryPanel.refreshCategories()
+
+    def refreshEntryEvents(self) -> None:
+        """活动记录变更后，刷新常规录入的「所属活动」下拉（红尖尖不涉及活动）。"""
+        self._taskBoardPanel.refreshEntryEvents()

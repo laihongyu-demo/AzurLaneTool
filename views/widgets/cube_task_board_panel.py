@@ -497,6 +497,10 @@ class CubeTaskBoardPanel(QWidget):
         """类型字典变化后，只刷新常规录入的类型下拉（不重渲染看板）。"""
         self._entry_panel.refreshCategories()
 
+    def refreshEntryEvents(self) -> None:
+        """活动记录变化后，只刷新常规录入的「所属活动」下拉（不重渲染看板）。"""
+        self._entry_panel.refreshEventOptions()
+
     def _formatPeriodSummary(self, period_info: Dict, selected: Optional[date] = None) -> str:
         """
         生成顶部周期信息文案。

@@ -5,6 +5,11 @@
 非固定收支（活动建造、礼包、军事委托等）。表单有四项：数量、类型、时刻、备注（可选），
 类型来自类型字典，方向由类型决定（同一名称可能两个方向都存在，因此按「类型 + 方向」落库）。
 
+选择「支出 · 活动建造」时额外显示「所属活动」下拉：默认关联当前进行中的活动；
+若有多个进行中活动，则默认最近一个并在标签上提示确认。选中后把这笔明细关联到该活动
+（``resource_transaction.event_id``），活动记录页按「关联魔方 ÷ 单耗 + 券抽」自动折算
+建造次数；录入金额必须是该活动单耗的整数倍。
+
 时刻默认取当前时间（精确到秒），可选择过去时间做补录，但不能晚于当前时间。
 备注只写入 ``resource_transaction.note``，暂不提供列表展示入口（见 #29）。
 
@@ -25,9 +30,14 @@ from services.resource_entry_service import (
     MAX_ENTRY_AMOUNT, MAX_NOTE_LENGTH, ResourceCategoryOption, ResourceEntryResult,
     ResourceEntryService,
 )
+from models.event_model import EventOption
 from utils import time_source
 from utils.constants import (
+    EVENT_BUILD_CATEGORY,
+    EVENT_SELECTOR_NONE_LABEL,
+    EVENT_STATUS_ONGOING,
     QT_RECORD_TIME_DISPLAY_FORMAT,
+    RESOURCE_DIRECTION_EXPENSE,
     RESOURCE_DIRECTION_NAMES,
     RESOURCE_TYPE_CUBE,
 )
@@ -67,10 +77,14 @@ class RegularEntryPanel(QWidget):
         self._resource_type = resource_type
         self._auto_moment: Optional[datetime] = time_source.now()
         self._undo_state_synced = False
+        # 用户是否改过「所属活动」：未改过时默认关联进行中的活动，改过后保持其选择
+        self._event_selection_touched = False
+        self._ongoing_event_count = 0
 
         self._initUi()
         self._connectSignals()
         self.refreshCategories()
+        self.refreshEventOptions()
         self._syncTimeLimit()
         self._syncUndoState()
 
@@ -128,6 +142,16 @@ class RegularEntryPanel(QWidget):
         self._noteEdit.setMaximumHeight(28)
         self._noteEdit.setToolTip("本次记录的备注；暂不提供历史列表展示入口")
 
+        self._eventLabel = QLabel("活动", self)
+        self._eventLabel.setToolTip("这笔「活动建造」归属的活动；选「不关联」也可以记录")
+
+        self._eventCombo = QComboBox(self)
+        self._eventCombo.setMaximumHeight(28)
+        self._eventCombo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._eventCombo.setToolTip(
+            "归属哪个活动；默认最近一个活动。选「不关联」表示这笔建造不计入活动统计"
+        )
+
         layout.addWidget(QLabel("数量", self), 0, 0)
         layout.addWidget(self._amountSpin, 0, 1)
         layout.addWidget(QLabel("类型", self), 0, 2)
@@ -139,8 +163,11 @@ class RegularEntryPanel(QWidget):
         layout.addWidget(self._undoBtn, 1, 4)
         layout.addWidget(self._nowBtn, 1, 5)
 
-        layout.addWidget(QLabel("备注", self), 2, 0)
-        layout.addWidget(self._noteEdit, 2, 1, 1, 5)
+        layout.addWidget(self._eventLabel, 2, 0)
+        layout.addWidget(self._eventCombo, 2, 1, 1, 5)
+
+        layout.addWidget(QLabel("备注", self), 3, 0)
+        layout.addWidget(self._noteEdit, 3, 1, 1, 5)
 
         layout.setColumnStretch(3, 1)
 
@@ -149,6 +176,8 @@ class RegularEntryPanel(QWidget):
         self._recordBtn.clicked.connect(self._onRecordClicked)
         self._undoBtn.clicked.connect(self._onUndoClicked)
         self._nowBtn.clicked.connect(self._onNowClicked)
+        self._typeCombo.currentIndexChanged.connect(self._onTypeChanged)
+        self._eventCombo.currentIndexChanged.connect(self._onEventSelectionChanged)
 
     # --------------------------------------------------------------- 数据
 
@@ -161,6 +190,7 @@ class RegularEntryPanel(QWidget):
             self._typeCombo.clear()
             self._typeCombo.addItem(f"类型加载失败：{e}", None)
             self._typeCombo.setEnabled(False)
+            self._syncEventRowVisibility()
             return
 
         self._typeCombo.setEnabled(True)
@@ -172,11 +202,133 @@ class RegularEntryPanel(QWidget):
             index = self._findOption(current)
             if index >= 0:
                 self._typeCombo.setCurrentIndex(index)
+        self._syncEventRowVisibility()
+
+    def refreshEventOptions(self) -> None:
+        """
+        重新加载「所属活动」下拉。
+
+        默认关联当前「进行中」的活动：
+
+        - 恰好一个：自动选中；
+        - 多个：默认选最近一个，并在标签上提示用户确认（业务占比很少）；
+        - 没有：默认「不关联」，用户仍可手动选择历史活动。
+
+        用户改过选择后（包括主动选「不关联」）保持其选择，不再自动回默认值。
+        """
+        current_id = self._selectedEventId()
+        try:
+            options = self._entry_service.getEventOptions()
+        except DatabaseError as e:
+            self._ongoing_event_count = 0
+            self._eventCombo.clear()
+            self._eventCombo.addItem(f"活动加载失败：{e}", None)
+            self._eventCombo.setEnabled(False)
+            self._updateEventHint()
+            return
+
+        ongoing = [option for option in options if option.status == EVENT_STATUS_ONGOING]
+        self._ongoing_event_count = len(ongoing)
+
+        self._eventCombo.setEnabled(True)
+        self._eventCombo.blockSignals(True)
+        try:
+            self._eventCombo.clear()
+            self._eventCombo.addItem(EVENT_SELECTOR_NONE_LABEL, None)
+            for option in options:
+                self._eventCombo.addItem(option.label, option)
+
+            if self._event_selection_touched:
+                index = self._findEventOption(current_id)
+            elif ongoing:
+                # 多个进行中活动时，默认最近一个，由标签提示用户确认
+                index = self._findEventOption(ongoing[0].id)
+            else:
+                index = -1
+            self._eventCombo.setCurrentIndex(index if index >= 0 else 0)
+        finally:
+            self._eventCombo.blockSignals(False)
+
+        self._updateEventHint()
+
+    def _findEventOption(self, event_id: Optional[int]) -> int:
+        """
+        按活动 ID 找到下拉下标。
+
+        Args:
+            event_id: 活动记录 ID；None 表示「不关联」。
+
+        Returns:
+            下标；找不到返回 -1。
+        """
+        if event_id is None:
+            return -1
+        for index in range(self._eventCombo.count()):
+            option = self._eventCombo.itemData(index)
+            if isinstance(option, EventOption) and option.id == event_id:
+                return index
+        return -1
+
+    def _selectedEventId(self) -> Optional[int]:
+        """
+        当前选择的活动 ID。
+
+        Returns:
+            活动记录 ID；选「不关联」或加载失败时返回 None。
+        """
+        option = self._eventCombo.currentData()
+        return option.id if isinstance(option, EventOption) else None
+
+    def _onTypeChanged(self) -> None:
+        """类型变化：只在「支出 · 活动建造」时显示活动选择行。"""
+        self._syncEventRowVisibility()
+
+    def _onEventSelectionChanged(self) -> None:
+        """用户改过活动选择后，刷新时不再自动回默认值。"""
+        self._event_selection_touched = True
+        self._updateEventHint()
+
+    def _updateEventHint(self) -> None:
+        """按进行中活动数量更新活动标签与下拉提示。"""
+        if self._ongoing_event_count > 1 and not self._event_selection_touched:
+            self._eventLabel.setText("活动（请选择）")
+            self._eventLabel.setStyleSheet("color: #c62828;")
+            self._eventCombo.setToolTip(
+                f"当前有 {self._ongoing_event_count} 个进行中的活动，"
+                "请确认这笔建造的归属"
+            )
+            return
+
+        self._eventLabel.setText("活动")
+        self._eventLabel.setStyleSheet("")
+        if self._ongoing_event_count > 1:
+            self._eventCombo.setToolTip("当前有多个进行中的活动；可改选其它活动或「不关联」")
+        elif self._ongoing_event_count == 1:
+            self._eventCombo.setToolTip(
+                "默认关联当前进行中的活动；可改选其它活动或「不关联」"
+            )
+        else:
+            self._eventCombo.setToolTip(
+                "当前没有进行中的活动；可选择历史活动或「不关联」"
+            )
+
+    def _syncEventRowVisibility(self) -> None:
+        """按「魔方 + 支出 · 活动建造」决定是否显示活动选择行。"""
+        option = self._selectedOption()
+        visible = (
+            self._resource_type == RESOURCE_TYPE_CUBE
+            and option is not None
+            and option.name == EVENT_BUILD_CATEGORY
+            and option.direction == RESOURCE_DIRECTION_EXPENSE
+        )
+        self._eventLabel.setVisible(visible)
+        self._eventCombo.setVisible(visible)
 
     def refreshState(self) -> None:
-        """刷新类型、时刻上限与撤销状态（外部数据变化后调用）。"""
+        """刷新类型、活动、时刻上限与撤销状态（外部数据变化后调用）。"""
         self.syncTimeContext()
         self.refreshCategories()
+        self.refreshEventOptions()
         self._syncUndoState()
 
     def syncTimeContext(self) -> bool:
@@ -303,6 +455,7 @@ class RegularEntryPanel(QWidget):
                 moment=self._selectedMoment(),
                 resource_type=self._resource_type,
                 note=self._noteEdit.text(),
+                event_id=self._selectedEventId() if not self._eventCombo.isHidden() else None,
             )
         except ValidationError as e:
             QMessageBox.warning(self, "无法记录", str(e))

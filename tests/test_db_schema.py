@@ -52,6 +52,21 @@ CREATE TABLE resource_category (
 );
 """
 
+LEGACY_EVENT_SCHEMA = """
+CREATE TABLE event_record (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_date  TEXT NOT NULL,
+    event_type  TEXT NOT NULL DEFAULT '',
+    name        TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT '',
+    status_note TEXT NOT NULL DEFAULT '',
+    draws       INTEGER,
+    note        TEXT NOT NULL DEFAULT '',
+    created_at  TEXT,
+    updated_at  TEXT
+);
+"""
+
 
 def _columns(conn: sqlite3.Connection, table: str):
     """读取表的列名集合。"""
@@ -81,16 +96,25 @@ class TestSchemaBootstrap(unittest.TestCase):
                 row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
             }
             transaction_columns = _columns(conn, "resource_transaction")
+            event_columns = _columns(conn, "event_record")
         finally:
             conn.close()
 
         self.assertTrue(
-            {"resource_daily", "resource_transaction", "resource_category", "commander_level_exp"}
+            {"resource_daily", "resource_transaction", "resource_category",
+             "commander_level_exp", "event_record"}
             <= tables
         )
         self.assertIn("record_time", transaction_columns)
         self.assertNotIn("record_date", transaction_columns)
+        self.assertIn("event_id", transaction_columns)
+        self.assertTrue(
+            {"build_cost", "use_ticket", "ticket_build_count", "build_count"}
+            <= event_columns
+        )
         self.assertIn("idx_resource_transaction_time", indexes)
+        self.assertIn("idx_resource_transaction_event", indexes)
+        self.assertIn("idx_event_record_date", indexes)
 
     def testUpgradesLegacyRecordDateColumn(self):
         """旧结构的 record_date 被改名、补齐时分秒，并回填日汇总的末次时刻。"""
@@ -135,10 +159,12 @@ class TestSchemaBootstrap(unittest.TestCase):
 
         self.assertIn("record_time", transaction_columns)
         self.assertNotIn("record_date", transaction_columns)
+        self.assertIn("event_id", transaction_columns)
         self.assertEqual(times, ["2024-10-17 00:00:00"] * 3)
         self.assertEqual(daily[0], ("2024-10-16", None))
         self.assertEqual(daily[1], ("2024-10-17", "2024-10-17 00:00:00"))
         self.assertIn("idx_resource_transaction_time", indexes)
+        self.assertIn("idx_resource_transaction_event", indexes)
 
     def testUpgradeIsIdempotent(self):
         """重复执行不报错、不重复改数据。"""
@@ -165,6 +191,40 @@ class TestSchemaBootstrap(unittest.TestCase):
             conn.close()
 
         self.assertEqual(times, ["2024-10-16 00:00:00"])
+
+    def testRenamesLegacyDrawsToBuildCount(self):
+        """旧活动表的 draws 改名为 build_count，并补齐单耗 / 建造券字段。"""
+        conn = sqlite3.connect(self._db_path)
+        try:
+            conn.executescript(LEGACY_EVENT_SCHEMA)
+            conn.execute(
+                "INSERT INTO event_record (event_date, name, draws)"
+                " VALUES ('2026-10-22', '飓风与雾霭回廊', 30)"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        ensureResourceStatisticsSchema(self._db_path)
+
+        conn = sqlite3.connect(self._db_path)
+        try:
+            columns = _columns(conn, "event_record")
+            rows = conn.execute(
+                "SELECT event_date, name, build_count, build_cost, use_ticket,"
+                " ticket_build_count FROM event_record"
+            ).fetchall()
+        finally:
+            conn.close()
+
+        self.assertIn("build_count", columns)
+        self.assertNotIn("draws", columns)
+        self.assertTrue(
+            {"build_cost", "use_ticket", "ticket_build_count"} <= columns
+        )
+        self.assertEqual(
+            rows, [("2026-10-22", "飓风与雾霭回廊", 30, 2, 0, None)]
+        )
 
 
 class TestCategoryDictionarySchema(unittest.TestCase):
