@@ -5,12 +5,14 @@
 """
 
 import sqlite3
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from models.codex_model import CodexGroupModel, CodexTpModel, CodexBuffModel
 from repositories.base_repository import BaseRepository
+from utils import codex_options as options
+from utils.codex_options import ID_PREFIX_PAD_WIDTH, LEVELS_FULL_TECH, getGroupIdPrefix
 from utils.exceptions import DatabaseError
-from utils.sql_loader import loadSqlFile
+from utils.sql_loader import loadSqlFile, loadSqlTemplate
 
 
 class CodexGroupRepository(BaseRepository[CodexGroupModel]):
@@ -57,6 +59,82 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"查询舰娘图鉴详情失败: {e}")
 
+    def getNextCodexId(self, ship_group: str) -> str:
+        """
+        生成指定分组的下一个图鉴ID。
+
+        纯数字分组（常规、小船、μ兵装）共用同一套数字序列，
+        其余分组按前缀（META/Plan/Collab/Refit）递增并补零。
+
+        Args:
+            ship_group: 舰娘分组。
+
+        Returns:
+            下一个可用的图鉴ID字符串。
+
+        Raises:
+            DatabaseError: 当数据库查询失败时抛出。
+        """
+        prefix = getGroupIdPrefix(ship_group)
+
+        if prefix:
+            sql = f"""
+                SELECT MAX(CAST(SUBSTR(codex_id, ?) AS INTEGER)) AS max_no
+                FROM {self.TABLE_NAME}
+                WHERE codex_id LIKE ?
+            """
+            params = (len(prefix) + 1, f"{prefix}%")
+        else:
+            sql = f"""
+                SELECT MAX(CAST(codex_id AS INTEGER)) AS max_no
+                FROM {self.TABLE_NAME}
+                WHERE codex_id NOT GLOB '*[^0-9]*'
+            """
+            params = ()
+
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql, params)
+                row = cursor.fetchone()
+                max_no = row['max_no'] if row and row['max_no'] is not None else 0
+
+                if prefix:
+                    return f"{prefix}{max_no + 1:0{ID_PREFIX_PAD_WIDTH}d}"
+                return str(max_no + 1)
+        except sqlite3.Error as e:
+            raise DatabaseError(f"生成图鉴ID失败: {e}")
+
+    def findByShipName(self, ship_name: str, ship_group: Optional[str] = None) -> List[CodexGroupModel]:
+        """
+        根据舰娘名称查询图鉴记录。
+
+        Args:
+            ship_name: 舰娘名称。
+            ship_group: 可选的舰娘分组，指定时仅在该分组内查询。
+
+        Returns:
+            匹配的舰娘模型列表。
+        """
+        sql = f"""
+            SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
+                   ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
+                   oath_status, codex_unlock, date_edit
+            FROM {self.TABLE_NAME}
+            WHERE ship_name = ?
+        """
+        params: tuple = (ship_name,)
+
+        if ship_group:
+            sql += " AND ship_group = ?"
+            params = (ship_name, ship_group)
+
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql, params)
+                return [CodexGroupModel.fromDict(dict(row)) for row in cursor.fetchall()]
+        except sqlite3.Error as e:
+            raise DatabaseError(f"查询舰娘名称失败: {e}")
+
     def findUnlocked(self) -> List[CodexGroupModel]:
         """查询已解锁的舰娘列表。"""
         sql = f"""
@@ -91,8 +169,17 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"查询未解锁舰娘列表失败: {e}")
 
-    def insert(self, record: CodexGroupModel) -> int:
-        """插入新舰娘图鉴记录。"""
+    def insert(self, record: CodexGroupModel, conn: Optional[sqlite3.Connection] = None) -> int:
+        """
+        插入新舰娘图鉴记录。
+
+        Args:
+            record: 要插入的舰娘图鉴模型。
+            conn: 可选的外部数据库连接，传入时复用其事务（由调用方提交/回滚）。
+
+        Returns:
+            新记录的 rowid。
+        """
         sql = f"""
             INSERT INTO {self.TABLE_NAME} (codex_id, ship_name, ship_level, ship_star,
                    ship_rarity, ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
@@ -106,8 +193,11 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
             record.codex_unlock, record.date_edit
         )
         try:
-            with self._getConnection() as conn:
-                cursor = conn.execute(sql, params)
+            if conn is not None:
+                return conn.execute(sql, params).lastrowid
+
+            with self._getConnection() as db_conn:
+                cursor = db_conn.execute(sql, params)
                 return cursor.lastrowid
         except sqlite3.Error as e:
             raise DatabaseError(f"插入舰娘图鉴记录失败: {e}")
@@ -218,10 +308,21 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         """
         获取布里需求数量统计。
 
+        稀有度口径（满星阈值、布里种类）来自 utils/codex_options.py 的单一来源，
+        通过 SQL 模板注入，避免出现第二套映射。
+
         Returns:
             布里需求列表，每项包含material_type和total_neededMaterial。
         """
-        sql = loadSqlFile("GetTheBulinRequirements_ByBulinQuality.sql")
+        sql = loadSqlTemplate(
+            "GetTheBulinRequirements_ByBulinQuality.sql",
+            max_star_case=options.buildMappingCaseSql(
+                "ship_rarity", options.RARITY_MAX_STAR, options.DEFAULT_MAX_STAR
+            ),
+            material_type_case=options.buildMappingCaseSql(
+                "ship_rarity", options.RARITY_BULIN_TYPE, None, quoteValue=True
+            ),
+        )
         try:
             with self._getConnection() as conn:
                 cursor = conn.execute(sql)
@@ -229,38 +330,152 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"查询布里需求失败: {e}")
 
-    def getRemainingLevelingCount(self) -> int:
+    def getRemainingLevelingCount(self, extra_excluded_levels: Optional[Sequence[str]] = None) -> int:
         """
-        获取剩余练级数量。
+        获取剩余练级数量（默认口径：排除已满120级的档位）。
 
         查询条件：
-        - ship_level NOT IN ('认知觉醒五阶', '认知觉醒Ⅱ')
+        - ship_level NOT IN LEVELS_FULL_TECH（认知觉醒五阶 / 认知觉醒II）
         - ship_group IN ('常规', 'META', '方案')
         - ship_camp != 'UNIV'
+        - 可选：额外排除的等级档位
+
+        Args:
+            extra_excluded_levels: 需要额外排除的 ship_level 取值（如一阶、四阶）。
 
         Returns:
             符合条件的舰娘数量。
+
+        Raises:
+            DatabaseError: 当数据库查询失败时抛出。
         """
-        sql = """
+        excluded_levels = list(LEVELS_FULL_TECH) + list(extra_excluded_levels or ())
+        placeholders = ', '.join('?' for _ in excluded_levels)
+        sql = f"""
             SELECT COUNT(*) as count
             FROM codex_group
-            WHERE ship_level NOT IN ('认知觉醒五阶', '认知觉醒Ⅱ')
+            WHERE ship_level NOT IN ({placeholders})
               AND ship_group IN ('常规', 'META', '方案')
               AND ship_camp != 'UNIV'
         """
         try:
             with self._getConnection() as conn:
-                cursor = conn.execute(sql)
+                cursor = conn.execute(sql, tuple(excluded_levels))
                 row = cursor.fetchone()
                 return row['count'] if row else 0
         except sqlite3.Error as e:
             raise DatabaseError(f"查询剩余练级数量失败: {e}")
 
+    def calculateMentalMaterials(self, target_phase: int) -> Dict[str, int]:
+        """
+        计算所有已解锁舰娘从当前状态提升至指定阶段所需的心智材料总量。
+
+        材料基准数据取自 ``awakening_of_mind`` 表（按「稀有度 × 心智觉醒阶段」给定消耗），
+        本方法只负责选出**需要补的（稀有度, 阶段）组合**并求和。
+
+        口径（已与维护者确认）：
+
+        - 等级代表**已完成的阶段**：``认知觉醒一阶`` 表示阶段 1 已完成，只计阶段 2 及以后；
+          未觉醒与改造占位值 ``'null'`` 均视为阶段 0，从阶段 1 开始计。
+        - 材料只消耗到**认知觉醒四阶**为止；四阶升五阶（120 级）不需要材料（五阶是自定义档位），
+          因此 ``认知觉醒四阶`` 与 ``认知觉醒五阶`` 都按阶段 4 处理。
+        - ``认知觉醒II`` 按阶段 5 处理（完全满级，无需再消耗）。
+        - 稀有度直接对齐基准表：META 舰使用标准稀有度，方案舰使用 ``PRY`` / ``DR``，
+          基准表中 ``PRY`` 与 ``SSR``、``DR`` 与 ``UR`` 的消耗相同，故按 ``ship_rarity`` 连接即可。
+        - 统计范围：仅 ``codex_unlock = 'Y'`` 的舰娘，且排除 ``μ兵装 / 小船 / 改造 / 联动`` 分组
+          与 ``UNIV`` 阵营（三艘布里）。
+
+        物资格式：
+        - expend_gc: 物资
+        - expend_limit: 心智单元
+        - expend_limit2: 心智单元Ⅱ
+
+        Args:
+            target_phase: 目标阶段（4=至认知觉醒五阶, 5=至认知觉醒II）。
+
+        Returns:
+            包含expend_gc、expend_limit、expend_limit2的字典。
+        """
+        # 阶段映射已完整覆盖各档位，无需再写等级排除条件
+        sql = f"""
+            SELECT
+                COALESCE(SUM(am.expend_gc), 0) AS expend_gc,
+                COALESCE(SUM(am.expend_limit), 0) AS expend_limit,
+                COALESCE(SUM(am.expend_limit2), 0) AS expend_limit2
+            FROM codex_group cg
+            JOIN awakening_of_mind am ON cg.ship_rarity = am.ship_rarity
+            WHERE cg.codex_unlock = 'Y'
+              AND cg.ship_group NOT IN ('μ兵装', '小船', '改造', '联动')
+              AND cg.ship_camp != 'UNIV'
+              AND am.am_phase > {options.buildPhaseCaseSql('cg.ship_level')}
+              AND am.am_phase <= ?
+        """
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql, (target_phase,))
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        "expend_gc": row["expend_gc"],
+                        "expend_limit": row["expend_limit"],
+                        "expend_limit2": row["expend_limit2"]
+                    }
+                return {"expend_gc": 0, "expend_limit": 0, "expend_limit2": 0}
+        except sqlite3.Error as e:
+            raise DatabaseError(f"计算心智材料失败: {e}")
+
+    def calculateAwakenConsume(self, codex_id, from_level: str, to_level: str) -> Dict[str, int]:
+        """
+        计算某舰娘从 from_level 觉醒到 to_level 所消耗的材料。
+
+        阶段口径与 :meth:`calculateMentalMaterials` 共用
+        :func:`utils.codex_options.getPhaseOfLevel`：只累计
+        「已完成阶段 +1」到「目标阶段」之间的基准表消耗。
+
+        Args:
+            codex_id: 图鉴ID。
+            from_level: 觉醒前等级。
+            to_level: 觉醒后等级。
+
+        Returns:
+            包含expend_gc、expend_limit、expend_limit2的字典。
+        """
+        from_phase = options.getPhaseOfLevel(from_level)
+        to_phase = options.getPhaseOfLevel(to_level)
+
+        if to_phase <= from_phase:
+            return {"expend_gc": 0, "expend_limit": 0, "expend_limit2": 0}
+
+        sql = """
+            SELECT
+                COALESCE(SUM(am.expend_gc), 0) AS expend_gc,
+                COALESCE(SUM(am.expend_limit), 0) AS expend_limit,
+                COALESCE(SUM(am.expend_limit2), 0) AS expend_limit2
+            FROM codex_group cg
+            JOIN awakening_of_mind am ON am.ship_rarity = cg.ship_rarity
+            WHERE cg.codex_id = ?
+              AND am.am_phase > ?
+              AND am.am_phase <= ?
+        """
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql, (str(codex_id), from_phase, to_phase))
+                row = cursor.fetchone()
+                if row:
+                    return {
+                        "expend_gc": row["expend_gc"],
+                        "expend_limit": row["expend_limit"],
+                        "expend_limit2": row["expend_limit2"]
+                    }
+                return {"expend_gc": 0, "expend_limit": 0, "expend_limit2": 0}
+        except sqlite3.Error as e:
+            raise DatabaseError(f"计算觉醒消耗失败: {e}")
+
     def findAwakenable(self) -> List[CodexGroupModel]:
         """
         查询可进行认知觉醒的舰娘列表。
 
-        条件：ship_level != '认知觉醒Ⅱ' 且 codex_unlock = 'Y'
+        条件：ship_level != '认知觉醒II' 且 codex_unlock = 'Y'
         排序：按ship_aid降序、codex_id降序排列。
 
         Returns:
@@ -271,7 +486,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
                    ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
                    oath_status, codex_unlock, date_edit
             FROM {self.TABLE_NAME}
-            WHERE codex_unlock = 'Y' AND ship_level != '认知觉醒Ⅱ' AND ship_group != '改造'
+            WHERE codex_unlock = 'Y' AND ship_level != '认知觉醒II' AND ship_group != '改造'
             ORDER BY ship_aid DESC, codex_id DESC
         """
         try:
@@ -317,13 +532,8 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
                    ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
                    oath_status, codex_unlock, date_edit
             FROM {self.TABLE_NAME}
-            WHERE ship_star < CASE
-                WHEN ship_rarity IN ('UR', 'DR', 'SSR', 'PRY') THEN 6
-                WHEN ship_rarity IN ('SR', 'R') THEN 5
-                WHEN ship_rarity = 'N' THEN 4
-                WHEN ship_rarity IN ('PR', 'E') THEN 3
-                ELSE 6
-            END
+            WHERE ship_star < {options.buildMappingCaseSql(
+                'ship_rarity', options.RARITY_MAX_STAR, options.DEFAULT_MAX_STAR)}
             AND ship_group != '改造'
             AND codex_unlock = 'Y'
             ORDER BY ship_aid DESC, codex_id DESC
@@ -353,6 +563,82 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
                 return cursor.rowcount > 0
         except sqlite3.Error as e:
             raise DatabaseError(f"更新舰娘星级失败: {e}")
+
+    def findOathable(self) -> List[CodexGroupModel]:
+        """
+        查询可进行誓约的舰娘列表。
+
+        筛选条件：
+        - oath_status = 'N'（未誓约）
+        - codex_unlock = 'Y'（已解锁）
+        - ship_group != '改造'
+        - 排序：ship_aid降序、codex_id降序
+
+        Returns:
+            可誓约舰娘模型列表。
+        """
+        sql = f"""
+            SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
+                   ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
+                   oath_status, codex_unlock, date_edit
+            FROM {self.TABLE_NAME}
+            WHERE oath_status = 'N' AND codex_unlock = 'Y' AND ship_group != '改造'
+            ORDER BY ship_aid DESC, codex_id DESC
+        """
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql)
+                return [CodexGroupModel.fromDict(dict(row)) for row in cursor.fetchall()]
+        except sqlite3.Error as e:
+            raise DatabaseError(f"查询可誓约舰娘列表失败: {e}")
+
+    def updateOathStatus(self, codex_id: str, oath_status: str = "Y") -> bool:
+        """
+        更新舰娘誓约状态。
+
+        Args:
+            codex_id: 图鉴ID。
+            oath_status: 誓约状态，默认为 'Y'。
+
+        Returns:
+            更新是否成功。
+        """
+        sql = f"UPDATE {self.TABLE_NAME} SET oath_status = ? WHERE codex_id = ?"
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql, (oath_status, codex_id))
+                return cursor.rowcount > 0
+        except sqlite3.Error as e:
+            raise DatabaseError(f"更新舰娘誓约状态失败: {e}")
+
+    def getOathStatistics(self) -> Dict[str, int]:
+        """
+        获取誓约统计信息。
+
+        统计规则：
+        - 排除ship_group为'改造'或'联动'的舰娘
+        - 以oath_status = 'Y'作为已誓约判定条件
+
+        Returns:
+            包含total（有效总数）和oathed（已誓约数）的字典。
+        """
+        sql = f"""
+            SELECT
+                COUNT(*) as total,
+                COALESCE(SUM(CASE WHEN oath_status = 'Y' THEN 1 ELSE 0 END), 0) as oathed
+            FROM {self.TABLE_NAME}
+            WHERE ship_group NOT IN ('改造', '联动')
+        """
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql)
+                row = cursor.fetchone()
+                return {
+                    "total": row['total'] if row else 0,
+                    "oathed": row['oathed'] if row else 0
+                }
+        except sqlite3.Error as e:
+            raise DatabaseError(f"查询誓约统计失败: {e}")
 
 
 class CodexTpRepository(BaseRepository[CodexTpModel]):
@@ -394,8 +680,17 @@ class CodexTpRepository(BaseRepository[CodexTpModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"查询TP详情失败: {e}")
 
-    def insert(self, record: CodexTpModel) -> int:
-        """插入TP记录。"""
+    def insert(self, record: CodexTpModel, conn: Optional[sqlite3.Connection] = None) -> int:
+        """
+        插入TP记录。
+
+        Args:
+            record: 要插入的TP模型。
+            conn: 可选的外部数据库连接，传入时复用其事务（由调用方提交/回滚）。
+
+        Returns:
+            新记录的 rowid。
+        """
         sql = f"""
             INSERT INTO {self.TABLE_NAME} (codex_id, ship_name, ship_camp, ship_typ,
                    tp_value, unlock_cond, tp_unlock, date_edit)
@@ -406,8 +701,11 @@ class CodexTpRepository(BaseRepository[CodexTpModel]):
             record.tp_value, record.unlock_cond, record.tp_unlock, record.date_edit
         )
         try:
-            with self._getConnection() as conn:
-                cursor = conn.execute(sql, params)
+            if conn is not None:
+                return conn.execute(sql, params).lastrowid
+
+            with self._getConnection() as db_conn:
+                cursor = db_conn.execute(sql, params)
                 return cursor.lastrowid
         except sqlite3.Error as e:
             raise DatabaseError(f"插入TP记录失败: {e}")
@@ -553,6 +851,30 @@ class CodexTpRepository(BaseRepository[CodexTpModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"更新TP满星状态失败: {e}")
 
+    def getTpValueByCondition(self, codex_id: str, unlock_cond: str) -> int:
+        """
+        查询指定舰娘在指定解锁条件下的科技点值。
+
+        Args:
+            codex_id: 图鉴ID。
+            unlock_cond: 解锁条件（如'解锁'、'满星'、'Lv.120'）。
+
+        Returns:
+            科技点值，未找到时返回0。
+        """
+        sql = f"""
+            SELECT COALESCE(SUM(tp_value), 0) as total
+            FROM {self.TABLE_NAME}
+            WHERE codex_id = ? AND unlock_cond = ?
+        """
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql, (codex_id, unlock_cond))
+                row = cursor.fetchone()
+                return row['total'] if row else 0
+        except sqlite3.Error as e:
+            raise DatabaseError(f"查询TP值失败: {e}")
+
 
 class CodexBuffRepository(BaseRepository[CodexBuffModel]):
     """
@@ -593,8 +915,17 @@ class CodexBuffRepository(BaseRepository[CodexBuffModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"查询Buff详情失败: {e}")
 
-    def insert(self, record: CodexBuffModel) -> int:
-        """插入Buff记录。"""
+    def insert(self, record: CodexBuffModel, conn: Optional[sqlite3.Connection] = None) -> int:
+        """
+        插入Buff记录。
+
+        Args:
+            record: 要插入的Buff模型。
+            conn: 可选的外部数据库连接，传入时复用其事务（由调用方提交/回滚）。
+
+        Returns:
+            新记录的 rowid。
+        """
         sql = f"""
             INSERT INTO {self.TABLE_NAME} (codex_id, ship_name, ship_camp, ship_typ,
                    boost_typ, buff_typ, buff_value, buff_cond, buff_unlock)
@@ -606,8 +937,11 @@ class CodexBuffRepository(BaseRepository[CodexBuffModel]):
             record.buff_unlock
         )
         try:
-            with self._getConnection() as conn:
-                cursor = conn.execute(sql, params)
+            if conn is not None:
+                return conn.execute(sql, params).lastrowid
+
+            with self._getConnection() as db_conn:
+                cursor = db_conn.execute(sql, params)
                 return cursor.lastrowid
         except sqlite3.Error as e:
             raise DatabaseError(f"插入Buff记录失败: {e}")
@@ -687,24 +1021,3 @@ class CodexBuffRepository(BaseRepository[CodexBuffModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"查询Buff解锁详情失败: {e}")
 
-    def updateFullStarByCodexId(self, codex_id: str) -> int:
-        """
-        更新指定舰娘的满星相关Buff记录。
-
-        Args:
-            codex_id: 图鉴ID。
-
-        Returns:
-            更新的记录数。
-        """
-        sql = f"""
-            UPDATE {self.TABLE_NAME}
-            SET buff_unlock = 'Y'
-            WHERE codex_id = ? AND buff_cond = '满星'
-        """
-        try:
-            with self._getConnection() as conn:
-                cursor = conn.execute(sql, (codex_id,))
-                return cursor.rowcount
-        except sqlite3.Error as e:
-            raise DatabaseError(f"更新Buff满星状态失败: {e}")

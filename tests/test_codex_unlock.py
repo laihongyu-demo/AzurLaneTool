@@ -37,7 +37,7 @@ class TestCodexModels(unittest.TestCase):
             "date_edit": None
         }
         model = CodexGroupModel.fromDict(data)
-        self.assertEqual(model.codex_id, 1)
+        self.assertEqual(model.codex_id, "1")
         self.assertEqual(model.ship_name, "测试舰娘")
         self.assertEqual(model.codex_unlock, "N")
 
@@ -215,18 +215,18 @@ class TestCodexUnlockService(unittest.TestCase):
 
     def testUnlockShip(self):
         """测试解锁舰娘。"""
-        success, message = self._service.unlockShip(1)
-        self.assertTrue(success)
-        self.assertIn("解锁成功", message)
+        result = self._service.unlockShip(1)
+        self.assertTrue(result.success)
+        self.assertIn("解锁成功", result.message)
 
         ship = self._service.getShipById(1)
         self.assertEqual(ship.codex_unlock, "Y")
 
     def testUnlockAlreadyUnlockedShip(self):
         """测试解锁已解锁的舰娘。"""
-        success, message = self._service.unlockShip(2)
-        self.assertFalse(success)
-        self.assertIn("已经解锁", message)
+        result = self._service.unlockShip(2)
+        self.assertFalse(result.success)
+        self.assertIn("已经解锁", result.message)
 
 
 class TestCodexGroupRepositoryExcludingCollab(unittest.TestCase):
@@ -386,15 +386,15 @@ class TestCodexGroupRepositorySorting(unittest.TestCase):
 
         self.assertEqual(ships[0].ship_name, "舰娘C")
         self.assertEqual(ships[0].ship_aid, "2024/6/1")
-        self.assertEqual(ships[0].codex_id, 3)
+        self.assertEqual(ships[0].codex_id, "3")
 
         self.assertEqual(ships[1].ship_name, "舰娘B")
         self.assertEqual(ships[1].ship_aid, "2024/6/1")
-        self.assertEqual(ships[1].codex_id, 2)
+        self.assertEqual(ships[1].codex_id, "2")
 
         self.assertEqual(ships[2].ship_name, "舰娘A")
         self.assertEqual(ships[2].ship_aid, "2024/1/1")
-        self.assertEqual(ships[2].codex_id, 1)
+        self.assertEqual(ships[2].codex_id, "1")
 
 
 if __name__ == "__main__":
