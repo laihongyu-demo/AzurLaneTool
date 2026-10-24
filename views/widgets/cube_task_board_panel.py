@@ -234,7 +234,9 @@ class CubeTaskBoardPanel(QWidget):
 
         self._group = QGroupBox(self._board_title)
         group_layout = QVBoxLayout(self._group)
-        group_layout.setContentsMargins(12, 16, 12, 12)
+        horizontal_margin = 8 if self._compact_header else 12
+        group_layout.setContentsMargins(horizontal_margin, 12 if self._compact_header else 16,
+                                       horizontal_margin, 10 if self._compact_header else 12)
         group_layout.setSpacing(8)
 
         group_layout.addLayout(self._buildHeader())
@@ -262,19 +264,19 @@ class CubeTaskBoardPanel(QWidget):
             水平布局。
         """
         header = QHBoxLayout()
-        header.setSpacing(8)
+        header.setSpacing(6 if self._compact_header else 8)
 
         self._dateEdit = QDateEdit(self)
         self._dateEdit.setCalendarPopup(True)
         self._dateEdit.setDisplayFormat(QT_DATE_DISPLAY_FORMAT)
         self._dateEdit.setDate(self._toQDate(self._auto_date))
         self._dateEdit.setMaximumDate(self._toQDate(time_source.today()))
-        self._dateEdit.setFixedWidth(110 if self._compact_header else 120)
+        self._dateEdit.setFixedWidth(100 if self._compact_header else 120)
         self._dateEdit.setMaximumHeight(28)
         self._dateEdit.setToolTip("补录时切到记录发生的那一天，任务会归属该日期所在周期")
 
         self._todayBtn = QPushButton("今天", self)
-        self._todayBtn.setFixedWidth(50)
+        self._todayBtn.setFixedWidth(44 if self._compact_header else 50)
         self._todayBtn.setMaximumHeight(28)
         self._todayBtn.setToolTip("把记账日期切回今天并刷新看板")
 
@@ -284,7 +286,7 @@ class CubeTaskBoardPanel(QWidget):
         self._refreshBtn.setVisible(not self._compact_header)
 
         self._periodCombo = QComboBox(self)
-        self._periodCombo.setFixedWidth(160 if self._compact_header else 190)
+        self._periodCombo.setFixedWidth(140 if self._compact_header else 190)
         self._periodCombo.setMaximumHeight(28)
         self._periodCombo.setToolTip("选择世界巡游档期；默认当前双月期")
         self._refreshPeriodOptions(self._auto_date)

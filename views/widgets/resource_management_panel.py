@@ -100,9 +100,9 @@ class ResourceManagementPanel(QWidget):
         """
         group = QGroupBox("红尖尖任务看板")
         layout = QGridLayout(group)
-        layout.setContentsMargins(12, 16, 12, 12)
-        layout.setHorizontalSpacing(12)
-        layout.setVerticalSpacing(8)
+        layout.setContentsMargins(8, 12, 8, 10)
+        layout.setHorizontalSpacing(8)
+        layout.setVerticalSpacing(6)
 
         hint = QLabel(
             "世界巡游每期 6 档、每档 50；贸易许可证每次续约 +500；"
@@ -129,7 +129,7 @@ class ResourceManagementPanel(QWidget):
 
         entry_group = QGroupBox("常规录入")
         entry_layout = QVBoxLayout(entry_group)
-        entry_layout.setContentsMargins(12, 16, 12, 12)
+        entry_layout.setContentsMargins(8, 12, 8, 10)
         entry_layout.setSpacing(6)
         self._redGemEntryPanel = RegularEntryPanel(
             resource_type=RESOURCE_TYPE_RED_GEM, parent=self

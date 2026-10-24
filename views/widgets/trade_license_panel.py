@@ -91,7 +91,7 @@ class TradeLicensePanel(QGroupBox):
     def _initUi(self) -> None:
         """初始化用户界面。"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 16, 12, 12)
+        layout.setContentsMargins(8, 12, 8, 10)
         layout.setSpacing(6)
 
         status_row = QHBoxLayout()

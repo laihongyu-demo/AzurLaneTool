@@ -44,7 +44,7 @@ from utils.constants import (
 from utils.exceptions import DatabaseError, ValidationError
 
 # 表单最大宽度：放在占满整行的分组里时保持紧凑，不把输入框拉成一条长条
-MAX_FORM_WIDTH = 520
+MAX_FORM_WIDTH = 480
 
 
 class RegularEntryPanel(QWidget):
@@ -97,8 +97,8 @@ class RegularEntryPanel(QWidget):
 
         layout = QGridLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setHorizontalSpacing(8)
-        layout.setVerticalSpacing(8)
+        layout.setHorizontalSpacing(6)
+        layout.setVerticalSpacing(6)
 
         self._amountSpin = QSpinBox(self)
         self._amountSpin.setRange(1, MAX_ENTRY_AMOUNT)
@@ -108,7 +108,7 @@ class RegularEntryPanel(QWidget):
         self._amountSpin.setToolTip("本次记入的数量")
 
         self._typeCombo = QComboBox(self)
-        self._typeCombo.setMinimumWidth(140)
+        self._typeCombo.setMinimumWidth(130)
         self._typeCombo.setMaximumHeight(28)
         self._typeCombo.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._typeCombo.setToolTip("收支类型；方向由类型决定（支出在前，收入在后）")
@@ -117,22 +117,22 @@ class RegularEntryPanel(QWidget):
         self._timeEdit.setDisplayFormat(QT_RECORD_TIME_DISPLAY_FORMAT)
         self._timeEdit.setCalendarPopup(True)
         self._timeEdit.setDateTime(QDateTime(self._auto_moment))
-        self._timeEdit.setFixedWidth(180)
+        self._timeEdit.setFixedWidth(170)
         self._timeEdit.setMaximumHeight(28)
         self._timeEdit.setToolTip("发生时刻，默认当前时间；可改到过去补录，不能晚于现在")
 
         self._recordBtn = QPushButton("记录", self)
-        self._recordBtn.setFixedWidth(64)
+        self._recordBtn.setFixedWidth(58)
         self._recordBtn.setMaximumHeight(28)
         self._recordBtn.setToolTip("写入一笔明细")
 
         self._undoBtn = QPushButton("撤销上一笔", self)
-        self._undoBtn.setFixedWidth(92)
+        self._undoBtn.setFixedWidth(86)
         self._undoBtn.setMaximumHeight(28)
         self._undoBtn.setToolTip("删除最近一笔常规录入（不含任务卡片产生的记录）")
 
         self._nowBtn = QPushButton("现在", self)
-        self._nowBtn.setFixedWidth(50)
+        self._nowBtn.setFixedWidth(46)
         self._nowBtn.setMaximumHeight(28)
         self._nowBtn.setToolTip("把时刻切回当前时间并恢复自动跟随")
 
