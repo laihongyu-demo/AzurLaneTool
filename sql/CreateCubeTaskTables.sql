@@ -1,18 +1,20 @@
--- 魔方任务看板表结构与任务定义
+-- 资源任务看板表结构与任务定义
 --
 -- 幂等：全部 IF NOT EXISTS；任务定义用 ON CONFLICT DO UPDATE，保证定义以本文件为准。
--- 口径见 docs/魔方任务看板需求方案_20261017.md §3、§6。
+-- 表名为历史名称，现同时承载魔方（18 项）与红尖尖世界巡游（6 项）任务。
+-- 口径见 docs/魔方任务看板需求方案_20261017.md 与 docs/20261024_红尖尖固定来源方案.md。
 
 CREATE TABLE IF NOT EXISTS cube_task (
-    code        TEXT PRIMARY KEY,
-    grp         TEXT NOT NULL CHECK (grp IN ('daily', 'weekly', 'signin', 'cruise')),
-    name        TEXT NOT NULL,
-    short_name  TEXT NOT NULL DEFAULT '',
-    reward      INTEGER NOT NULL CHECK (reward > 0),
-    period_type TEXT NOT NULL CHECK (period_type IN ('day', 'week', 'month', 'cruise')),
-    category    TEXT NOT NULL,
-    sort_order  INTEGER NOT NULL DEFAULT 0,
-    active      INTEGER NOT NULL DEFAULT 1
+    code         TEXT PRIMARY KEY,
+    resource_type TEXT NOT NULL DEFAULT 'cube' CHECK (resource_type IN ('cube', 'red_gem')),
+    grp          TEXT NOT NULL CHECK (grp IN ('daily', 'weekly', 'signin', 'cruise')),
+    name         TEXT NOT NULL,
+    short_name   TEXT NOT NULL DEFAULT '',
+    reward       INTEGER NOT NULL CHECK (reward > 0),
+    period_type  TEXT NOT NULL CHECK (period_type IN ('day', 'week', 'month', 'cruise')),
+    category     TEXT NOT NULL,
+    sort_order   INTEGER NOT NULL DEFAULT 0,
+    active       INTEGER NOT NULL DEFAULT 1
 );
 
 -- 完成记录：一条记录对应一笔魔方收入；transaction_id 为空表示"仅标记不记账"（期初对齐的兜底）
@@ -51,6 +53,7 @@ INSERT INTO cube_task (code, grp, name, short_name, reward, period_type, categor
     ('cruise_lv65',       'cruise', '世界巡游·65 级',                            '65 级',           5, 'cruise', '世界巡游', 370, 1),
     ('cruise_lv75',       'cruise', '世界巡游·75 级',                            '75 级',           8, 'cruise', '世界巡游', 380, 1)
 ON CONFLICT(code) DO UPDATE SET
+    resource_type = 'cube',
     grp         = excluded.grp,
     name        = excluded.name,
     short_name  = excluded.short_name,
@@ -58,3 +61,24 @@ ON CONFLICT(code) DO UPDATE SET
     period_type = excluded.period_type,
     category    = excluded.category,
     sort_order  = excluded.sort_order;
+
+-- 红尖尖固定来源：世界巡游（大月卡）6 档，每档 50，每期合计 300
+INSERT INTO cube_task
+    (code, resource_type, grp, name, short_name, reward, period_type, category, sort_order, active)
+VALUES
+    ('red_cruise_lv10', 'red_gem', 'cruise', '世界巡游·10 级', '10 级', 50, 'cruise', '世界巡游', 410, 1),
+    ('red_cruise_lv20', 'red_gem', 'cruise', '世界巡游·20 级', '20 级', 50, 'cruise', '世界巡游', 420, 1),
+    ('red_cruise_lv40', 'red_gem', 'cruise', '世界巡游·40 级', '40 级', 50, 'cruise', '世界巡游', 430, 1),
+    ('red_cruise_lv60', 'red_gem', 'cruise', '世界巡游·60 级', '60 级', 50, 'cruise', '世界巡游', 440, 1),
+    ('red_cruise_lv70', 'red_gem', 'cruise', '世界巡游·70 级', '70 级', 50, 'cruise', '世界巡游', 450, 1),
+    ('red_cruise_lv80', 'red_gem', 'cruise', '世界巡游·80 级', '80 级', 50, 'cruise', '世界巡游', 460, 1)
+ON CONFLICT(code) DO UPDATE SET
+    resource_type = excluded.resource_type,
+    grp         = excluded.grp,
+    name        = excluded.name,
+    short_name  = excluded.short_name,
+    reward      = excluded.reward,
+    period_type = excluded.period_type,
+    category    = excluded.category,
+    sort_order  = excluded.sort_order,
+    active      = excluded.active;

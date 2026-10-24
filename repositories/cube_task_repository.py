@@ -9,6 +9,7 @@ from typing import List, Optional, Sequence
 
 from models.cube_task_model import CubeTaskCompletionModel, CubeTaskModel
 from repositories.base_repository import BaseRepository
+from utils.constants import RESOURCE_TYPE_CUBE
 from utils.db_connection import DatabaseConnection
 from utils.exceptions import DatabaseError
 
@@ -24,9 +25,12 @@ class CubeTaskRepository(BaseRepository[CubeTaskModel]):
     TASK_TABLE = "cube_task"
     COMPLETION_TABLE = "cube_task_completion"
 
-    def findAll(self) -> List[CubeTaskModel]:
+    def findAll(self, resource_type: str = RESOURCE_TYPE_CUBE) -> List[CubeTaskModel]:
         """
-        查询全部启用的任务定义。
+        查询指定资源的全部启用的任务定义。
+
+        Args:
+            resource_type: 资源类型，``cube`` 或 ``red_gem``。
 
         Returns:
             任务模型列表，按排序序号升序。
@@ -35,14 +39,14 @@ class CubeTaskRepository(BaseRepository[CubeTaskModel]):
             DatabaseError: 当查询失败时抛出。
         """
         sql = f"""
-            SELECT code, grp, name, short_name, reward, period_type, category,
-                   sort_order, active
+            SELECT code, resource_type, grp, name, short_name, reward, period_type,
+                   category, sort_order, active
             FROM {self.TASK_TABLE}
-            WHERE active = 1
+            WHERE active = 1 AND resource_type = ?
             ORDER BY sort_order
         """
         try:
-            results = DatabaseConnection.executeQuery(sql)
+            results = DatabaseConnection.executeQuery(sql, (resource_type,))
             return [CubeTaskModel.fromDict(row) for row in results]
         except Exception as e:
             raise DatabaseError(f"查询任务定义失败: {e}")
@@ -76,8 +80,8 @@ class CubeTaskRepository(BaseRepository[CubeTaskModel]):
             DatabaseError: 当查询失败时抛出。
         """
         sql = f"""
-            SELECT code, grp, name, short_name, reward, period_type, category,
-                   sort_order, active
+            SELECT code, resource_type, grp, name, short_name, reward, period_type,
+                   category, sort_order, active
             FROM {self.TASK_TABLE}
             WHERE code = ? AND active = 1
         """
@@ -278,11 +282,12 @@ class CubeTaskRepository(BaseRepository[CubeTaskModel]):
         """
         sql = f"""
             INSERT INTO {self.TASK_TABLE}
-                (code, grp, name, reward, period_type, category, sort_order, active)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (code, resource_type, grp, name, reward, period_type, category,
+                 sort_order, active)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (
-            record.code, record.grp, record.name, record.reward,
+            record.code, record.resource_type, record.grp, record.name, record.reward,
             record.period_type, record.category, record.sort_order, record.active,
         )
         try:
@@ -305,13 +310,14 @@ class CubeTaskRepository(BaseRepository[CubeTaskModel]):
         """
         sql = f"""
             UPDATE {self.TASK_TABLE}
-               SET grp = ?, name = ?, reward = ?, period_type = ?,
+               SET resource_type = ?, grp = ?, name = ?, reward = ?, period_type = ?,
                    category = ?, sort_order = ?, active = ?
              WHERE code = ?
         """
         params = (
-            record.grp, record.name, record.reward, record.period_type,
-            record.category, record.sort_order, record.active, record.code,
+            record.resource_type, record.grp, record.name, record.reward,
+            record.period_type, record.category, record.sort_order, record.active,
+            record.code,
         )
         try:
             return DatabaseConnection.executeUpdate(sql, params) > 0

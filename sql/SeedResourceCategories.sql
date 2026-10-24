@@ -42,7 +42,9 @@ ON CONFLICT(resource_type, direction, name) DO NOTHING;
 INSERT INTO resource_category (resource_type, direction, name, sort_order) VALUES
     ('red_gem', 'income', '军事委托',  10),
     ('red_gem', 'income', '礼包',      20),
+    ('red_gem', 'income', '世界巡游',  25),
     ('red_gem', 'income', '月卡',      30),
+    ('red_gem', 'income', '贸易许可证', 35),
     ('red_gem', 'income', '活动任务',  40),
     ('red_gem', 'income', '维护奖励',  50),
     ('red_gem', 'income', '节日奖励',  60),

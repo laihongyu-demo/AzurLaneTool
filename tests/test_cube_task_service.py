@@ -17,7 +17,7 @@ from repositories.resource_repository import ResourceRepository
 from services.cube_task_service import (
     CubeTaskService, buildPeriodKey, cruisePeriodEnd, cruisePeriodStart, periodRange,
 )
-from utils.constants import RESOURCE_TYPE_CUBE
+from utils.constants import RESOURCE_TYPE_CUBE, RESOURCE_TYPE_RED_GEM
 from utils.db_connection import DatabaseConnection
 from utils.db_schema import ensureResourceStatisticsSchema
 from utils.exceptions import ValidationError
@@ -98,14 +98,23 @@ class TestTaskDefinitions(_TempTaskDatabaseCase):
     """任务定义与分组测试。"""
 
     def testDefinitionsSeeded(self):
-        """18 项任务按分组定义，奖励合计符合 4 / 12 / 30 / 50。"""
-        rows = self._query("SELECT grp, COUNT(*), SUM(reward) FROM cube_task GROUP BY grp")
+        """魔方 18 项按分组定义，红尖尖 6 项世界巡游独立定义。"""
+        rows = self._query(
+            "SELECT grp, COUNT(*), SUM(reward) FROM cube_task"
+            " WHERE resource_type = 'cube' GROUP BY grp"
+        )
         summary = {grp: (count, total) for grp, count, total in rows}
 
         self.assertEqual(summary["daily"], (3, 4))
         self.assertEqual(summary["weekly"], (3, 12))
         self.assertEqual(summary["signin"], (4, 30))
         self.assertEqual(summary["cruise"], (8, 50))
+
+        red_rows = self._query(
+            "SELECT grp, COUNT(*), SUM(reward) FROM cube_task"
+            " WHERE resource_type = 'red_gem' GROUP BY grp"
+        )
+        self.assertEqual(red_rows, [("cruise", 6, 300)])
 
     def testBoardGroupsAndTotals(self):
         """看板返回 3 个展示分组，合计口径正确。"""
@@ -127,6 +136,65 @@ class TestTaskDefinitions(_TempTaskDatabaseCase):
         self.assertEqual(info["week"].label, "2026 第 42 周（10-12 ~ 10-18）")
         self.assertEqual(info["month"].label, "2026-10")
         self.assertEqual(info["cruise"].label, "2026-10-01 ~ 2026-11-30")
+
+
+class TestRedGemTasks(_TempTaskDatabaseCase):
+    """红尖尖世界巡游任务测试。"""
+
+    def setUp(self):
+        super().setUp()
+        self._red_service = CubeTaskService(resource_type=RESOURCE_TYPE_RED_GEM)
+
+    def testBoardOnlyShowsCruise(self):
+        """红尖尖看板只返回世界巡游分组，6 档合计 300。"""
+        groups = self._red_service.getBoard(date.today())
+
+        self.assertEqual(len(groups), 1)
+        self.assertEqual(groups[0].key, "cruise")
+        self.assertEqual(groups[0].total, 300)
+        self.assertEqual(
+            [state.task.code for state in groups[0].tasks],
+            [
+                "red_cruise_lv10", "red_cruise_lv20", "red_cruise_lv40",
+                "red_cruise_lv60", "red_cruise_lv70", "red_cruise_lv80",
+            ],
+        )
+
+    def testCompleteWritesRedGemTransaction(self):
+        """完成红尖尖巡游档位写 50 红尖尖，周期键为双月期。"""
+        moment = datetime.now().replace(microsecond=0)
+        result = self._red_service.completeTask("red_cruise_lv10", moment)
+
+        self.assertTrue(result.success)
+        rows = self._query(
+            "SELECT resource_type, direction, category, amount, note"
+            " FROM resource_transaction"
+        )
+        self.assertEqual(
+            rows,
+            [("red_gem", "income", "世界巡游", 50, "世界巡游·10 级")],
+        )
+        period_key = buildPeriodKey("cruise", moment.date())
+        completions = self._query(
+            "SELECT task_code, period_key FROM cube_task_completion"
+        )
+        self.assertEqual(completions, [("red_cruise_lv10", period_key)])
+
+    def testCubeServiceRejectsRedTask(self):
+        """魔方服务不能完成红尖尖任务。"""
+        with self.assertRaises(ValidationError):
+            self._service.completeTask("red_cruise_lv10", datetime.now())
+
+    def testCancelDeletesRedGemTransaction(self):
+        """取消红尖尖档位删除对应 50 红尖尖明细。"""
+        moment = datetime.now().replace(microsecond=0)
+        self._red_service.completeTask("red_cruise_lv20", moment)
+
+        result = self._red_service.cancelTask("red_cruise_lv20", moment.date())
+
+        self.assertTrue(result.success)
+        self.assertEqual(self._query("SELECT id FROM resource_transaction"), [])
+        self.assertEqual(self._query("SELECT id FROM cube_task_completion"), [])
 
 
 class TestCompleteAndCancel(_TempTaskDatabaseCase):

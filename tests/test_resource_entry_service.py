@@ -100,7 +100,8 @@ class TestCategories(_TempEntryDatabaseCase):
 
         self.assertEqual(
             income,
-            ["军事委托", "礼包", "月卡", "活动任务", "维护奖励", "节日奖励", "岛屿计划", "主线任务", "充值"],
+            ["军事委托", "礼包", "月卡", "贸易许可证", "活动任务", "维护奖励",
+             "节日奖励", "岛屿计划", "主线任务", "充值"],
         )
         self.assertEqual(
             expense,

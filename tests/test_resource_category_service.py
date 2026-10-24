@@ -514,7 +514,7 @@ class TestRestartKeepsCustomizations(_TempCategoryDatabaseCase):
                 ("开发船坞", 70, 1),
             ],
         )
-        self.assertEqual(self._query("SELECT COUNT(*) FROM resource_category")[0][0], 41)
+        self.assertEqual(self._query("SELECT COUNT(*) FROM resource_category")[0][0], 43)
 
 
 if __name__ == "__main__":

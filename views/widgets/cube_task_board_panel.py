@@ -1,30 +1,36 @@
 """
-魔方任务看板面板模块。
+资源任务看板面板模块。
 
-提供固定奖励任务（日常 / 周常 / 每月签到 / 世界巡游）的看板：
-单击完成即自动记账，双击已完成项取消（删除对应明细）。
+提供固定奖励任务的看板：单击完成即自动记账，双击已完成项取消（删除对应明细）。
+同一控件按 ``resource_type`` 复用于魔方与红尖尖：
+
+- 魔方：任务 / 每月签到 / 世界巡游 / 常规录入；
+- 红尖尖：世界巡游，不附带常规录入分组。
 
 布局约定：
-- 「魔方任务看板」是页签级分组；其内部 任务 / 每月签到 / 世界巡游 / 常规录入 四个分组同级；
 - 分组与卡片都填满所在网格单元（``Expanding``），右边缘对齐、不留缺口；
-- 列数按可用宽度自适应：宽屏 2 列、窄屏 1 列，切换时重排；
+- 列数按可用宽度自适应：宽屏 2 列、窄屏 1 列；只有 1 个分组时强制单列；
 - 卡片只显示短标签（``short_name``），完整任务名放 tooltip，避免长文本撑宽控件。
 """
 
 from datetime import date, datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from PyQt5.QtCore import QDate, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
-    QDateEdit, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
+    QComboBox, QDateEdit, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
     QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from services.cube_task_service import (
     CubeTaskGroupView, CubeTaskService, CubeTaskState, CubeTaskWriteResult,
 )
+from services.world_cruise_service import WorldCruiseService
 from utils import time_source
-from utils.constants import QT_DATE_DISPLAY_FORMAT, TASK_GROUP_DAILY, TASK_GROUP_WEEKLY
+from utils.constants import (
+    QT_DATE_DISPLAY_FORMAT, RESOURCE_DISPLAY_NAMES, TASK_GROUP_DAILY,
+    TASK_GROUP_WEEKLY, TASK_PERIOD_CRUISE, TASK_PERIODS,
+)
 from utils.exceptions import DatabaseError, ValidationError
 from views.widgets.regular_entry_panel import RegularEntryPanel
 
@@ -100,16 +106,20 @@ class CubeTaskCard(QPushButton):
     completeRequested = pyqtSignal(str)
     cancelRequested = pyqtSignal(str)
 
-    def __init__(self, state: CubeTaskState, parent: QWidget = None):
+    def __init__(
+        self, state: CubeTaskState, resource_name: str = "魔方", parent: QWidget = None
+    ):
         """
         初始化任务卡片。
 
         Args:
             state: 任务状态。
+            resource_name: 资源显示名，用于 tooltip。
             parent: 父控件。
         """
         super().__init__(parent)
         self._state = state
+        self._resource_name = resource_name
         self.setCursor(Qt.PointingHandCursor)
         self.setMinimumHeight(38)
         self.setMaximumHeight(44)
@@ -138,7 +148,9 @@ class CubeTaskCard(QPushButton):
                 self.setToolTip(tip)
         else:
             self.setStyleSheet(PENDING_STYLE)
-            self.setToolTip(f"{task.name}\n{task.category}｜单击标记完成并 +{task.reward} 个魔方")
+            self.setToolTip(
+                f"{task.name}\n{task.category}｜单击标记完成并 +{task.reward} 个{self._resource_name}"
+            )
 
     def _onClicked(self) -> None:
         """单击：未完成 → 请求完成；已完成 → 忽略（避免双击误触发完成）。"""
@@ -169,7 +181,11 @@ class CubeTaskBoardPanel(QWidget):
         self,
         task_service: Optional[CubeTaskService] = None,
         entry_panel: Optional[RegularEntryPanel] = None,
-        parent: QWidget = None
+        parent: QWidget = None,
+        board_title: Optional[str] = None,
+        include_entry: bool = True,
+        period_types: Optional[Sequence[str]] = None,
+        compact_header: bool = False,
     ):
         """
         初始化任务看板面板。
@@ -178,15 +194,31 @@ class CubeTaskBoardPanel(QWidget):
             task_service: 任务看板服务实例。
             entry_panel: 常规录入面板（可注入以便测试）。
             parent: 父控件。
+            board_title: 分组标题；默认按资源类型生成。
+            include_entry: 是否在末尾附带「常规录入」分组。
+            period_types: 顶部周期信息展示哪些周期；默认日 / 周 / 月 / 期。
+            compact_header: 是否使用紧凑工具条（隐藏刷新、收窄日期/档期控件）。
         """
         super().__init__(parent)
         self._task_service = task_service or CubeTaskService()
-        self._entry_panel = entry_panel or RegularEntryPanel()
+        self._resource_type = self._task_service.resourceType
+        self._resource_name = RESOURCE_DISPLAY_NAMES.get(self._resource_type, "资源")
+        self._board_title = board_title or f"{self._resource_name}任务看板"
+        self._include_entry = include_entry
+        self._period_types = tuple(period_types or TASK_PERIODS)
+        self._compact_header = compact_header
+        self._entry_panel = None
+        if include_entry:
+            self._entry_panel = entry_panel or RegularEntryPanel(
+                resource_type=self._resource_type
+            )
+        self._world_cruise_service = WorldCruiseService()
         self._state_by_code: Dict[str, CubeTaskState] = {}
         self._groups: List[CubeTaskGroupView] = []
         self._current_columns = 0
         self._auto_date: Optional[date] = time_source.today()
         self._syncing_date = False
+        self._syncing_period = False
 
         self._initUi()
         self._connectSignals()
@@ -200,7 +232,7 @@ class CubeTaskBoardPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self._group = QGroupBox("魔方任务看板")
+        self._group = QGroupBox(self._board_title)
         group_layout = QVBoxLayout(self._group)
         group_layout.setContentsMargins(12, 16, 12, 12)
         group_layout.setSpacing(8)
@@ -213,7 +245,8 @@ class CubeTaskBoardPanel(QWidget):
         group_layout.addLayout(self._boardLayout)
 
         self._hintLabel = QLabel(
-            "单击卡片完成并自动记一笔魔方收入；对已完成项双击可取消（会删除对应明细）。",
+            f"单击卡片完成并自动记一笔{self._resource_name}收入；"
+            "对已完成项双击可取消（会删除对应明细）。",
             self,
         )
         self._hintLabel.setStyleSheet("color: #666; font-size: 12px;")
@@ -223,7 +256,7 @@ class CubeTaskBoardPanel(QWidget):
 
     def _buildHeader(self) -> QHBoxLayout:
         """
-        构建顶部工具条（记账日期 + 周期信息 + 刷新）。
+        构建顶部工具条（记账日期 + 档期 + 周期信息 + 刷新）。
 
         Returns:
             水平布局。
@@ -236,7 +269,7 @@ class CubeTaskBoardPanel(QWidget):
         self._dateEdit.setDisplayFormat(QT_DATE_DISPLAY_FORMAT)
         self._dateEdit.setDate(self._toQDate(self._auto_date))
         self._dateEdit.setMaximumDate(self._toQDate(time_source.today()))
-        self._dateEdit.setFixedWidth(120)
+        self._dateEdit.setFixedWidth(110 if self._compact_header else 120)
         self._dateEdit.setMaximumHeight(28)
         self._dateEdit.setToolTip("补录时切到记录发生的那一天，任务会归属该日期所在周期")
 
@@ -248,6 +281,13 @@ class CubeTaskBoardPanel(QWidget):
         self._refreshBtn = QPushButton("刷新", self)
         self._refreshBtn.setFixedWidth(70)
         self._refreshBtn.setMaximumHeight(28)
+        self._refreshBtn.setVisible(not self._compact_header)
+
+        self._periodCombo = QComboBox(self)
+        self._periodCombo.setFixedWidth(160 if self._compact_header else 190)
+        self._periodCombo.setMaximumHeight(28)
+        self._periodCombo.setToolTip("选择世界巡游档期；默认当前双月期")
+        self._refreshPeriodOptions(self._auto_date)
 
         self._periodLabel = QLabel("", self)
         self._periodLabel.setStyleSheet("color: #666; font-size: 12px;")
@@ -256,9 +296,15 @@ class CubeTaskBoardPanel(QWidget):
         header.addWidget(QLabel("记账日期:", self))
         header.addWidget(self._dateEdit)
         header.addWidget(self._todayBtn)
+        if TASK_PERIOD_CRUISE in self._period_types:
+            header.addWidget(QLabel("档期:", self))
+            header.addWidget(self._periodCombo)
         header.addWidget(self._refreshBtn)
-        header.addSpacing(8)
-        header.addWidget(self._periodLabel, 1)
+        if not self._compact_header:
+            header.addSpacing(8)
+            header.addWidget(self._periodLabel, 1)
+        else:
+            self._periodLabel.setVisible(False)
         return header
 
     def _toQDate(self, value: date) -> QDate:
@@ -304,8 +350,59 @@ class CubeTaskBoardPanel(QWidget):
         self._refreshBtn.clicked.connect(self._onRefreshClicked)
         self._todayBtn.clicked.connect(self._onTodayClicked)
         self._dateEdit.dateChanged.connect(self._onDateChanged)
-        self._entry_panel.dataRefreshed.connect(self._onEntryDataRefreshed)
-        self._entry_panel.entryRecorded.connect(self.entryResult.emit)
+        self._periodCombo.currentIndexChanged.connect(self._onPeriodChanged)
+        if self._entry_panel is not None:
+            self._entry_panel.dataRefreshed.connect(self._onEntryDataRefreshed)
+            self._entry_panel.entryRecorded.connect(self.entryResult.emit)
+
+    def _refreshPeriodOptions(self, reference: date) -> None:
+        """
+        重建档期下拉选项，并默认选中参考日期所属档期。
+
+        Args:
+            reference: 参考日期。
+        """
+        periods = self._world_cruise_service.listPeriods(reference)
+        current = self._world_cruise_service.getPeriod(reference)
+        self._syncing_period = True
+        try:
+            self._periodCombo.clear()
+            for period in periods:
+                self._periodCombo.addItem(period.label, period.key)
+            index = self._periodCombo.findData(current.key)
+            if index >= 0:
+                self._periodCombo.setCurrentIndex(index)
+        finally:
+            self._syncing_period = False
+
+    def _syncPeriodSelection(self) -> None:
+        """把档期下拉同步到当前记账日期所属档期。"""
+        if self._syncing_period:
+            return
+        period = self._world_cruise_service.getPeriod(self._selectedDate())
+        index = self._periodCombo.findData(period.key)
+        self._syncing_period = True
+        try:
+            if index < 0:
+                self._periodCombo.addItem(period.label, period.key)
+                index = self._periodCombo.count() - 1
+            self._periodCombo.setCurrentIndex(index)
+        finally:
+            self._syncing_period = False
+
+    def _onPeriodChanged(self, index: int) -> None:
+        """档期下拉变化：把记账日期切到该档期，当前期则回到今天。"""
+        if self._syncing_period or index < 0:
+            return
+        period_key = self._periodCombo.itemData(index)
+        if not period_key:
+            return
+        period = self._world_cruise_service.getPeriodByKey(period_key)
+        today = time_source.today()
+        target = today if period.key == self._world_cruise_service.getPeriod(today).key else period.end
+        self._auto_date = today if target == today else None
+        self._setSelectedDate(target)
+        self.refreshData()
 
     def _onEntryDataRefreshed(self) -> None:
         """常规录入写入成功：通知外部刷新看板卡片。"""
@@ -349,16 +446,22 @@ class CubeTaskBoardPanel(QWidget):
         """
         today = time_source.today()
         self._syncMaximumDate(today)
-        self._entry_panel.syncTimeContext()
-        return self._advanceAutoDate(today)
+        if self._entry_panel is not None:
+            self._entry_panel.syncTimeContext()
+        advanced = self._advanceAutoDate(today)
+        self._syncPeriodSelection()
+        return advanced
 
     def onActivated(self) -> None:
         """页签激活 / 跨天检查：同步日期与时刻，必要时刷新当前周期。"""
         today = time_source.today()
         self._syncMaximumDate(today)
-        self._entry_panel.onActivated()
+        if self._entry_panel is not None:
+            self._entry_panel.onActivated()
         if self._advanceAutoDate(today):
             self.refreshData()
+        else:
+            self._syncPeriodSelection()
 
     def _advanceAutoDate(self, today: date) -> bool:
         """
@@ -386,6 +489,7 @@ class CubeTaskBoardPanel(QWidget):
         selected = self._selectedDate()
         # 手动选回今天时恢复自动跟随，明天零点可以继续自动前进
         self._auto_date = selected if selected == time_source.today() else None
+        self._syncPeriodSelection()
         self.refreshData()
 
     def _onTodayClicked(self) -> None:
@@ -394,6 +498,7 @@ class CubeTaskBoardPanel(QWidget):
         self._auto_date = today
         self._syncMaximumDate(today)
         self._setSelectedDate(today)
+        self._syncPeriodSelection()
         self.refreshData()
 
     def _onRefreshClicked(self) -> None:
@@ -422,7 +527,10 @@ class CubeTaskBoardPanel(QWidget):
 
         message = f"确定取消「{state.task.name}」的完成状态吗？"
         if state.completed_at:
-            message += f"\n完成于 {state.completed_at}，将删除对应的 {state.task.reward} 个魔方收入记录。"
+            message += (
+                f"\n完成于 {state.completed_at}，将删除对应的 "
+                f"{state.task.reward} 个{self._resource_name}收入记录。"
+            )
         reply = QMessageBox.question(
             self, "确认取消", message, QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
@@ -448,17 +556,30 @@ class CubeTaskBoardPanel(QWidget):
         Args:
             result: 写操作结果。
         """
-        self.resultReady.emit(result)
         self.refreshData()
         self.dataRefreshed.emit()
+        # 最后回报结果，避免全局刷新把状态栏文案覆盖掉
+        self.resultReady.emit(result)
 
     # --------------------------------------------------------------- 渲染
 
     def resizeEvent(self, event) -> None:
         """宽度变化导致列数改变时重新排布（保持右边缘对齐）。"""
         super().resizeEvent(event)
-        if self._groups and self._columnCount() != self._current_columns:
+        if self._groups and self._desiredColumns() != self._current_columns:
             self._renderBoard()
+
+    def _desiredColumns(self) -> int:
+        """
+        当前分组数量下应使用的列数。
+
+        只有 1 个分组时强制单列占满，避免红尖尖巡游看板右侧留出空单元格。
+
+        Returns:
+            列数（1 或 2）。
+        """
+        widget_count = len(self._groups) + (1 if self._include_entry else 0)
+        return max(1, min(self._columnCount(), widget_count))
 
     def _columnCount(self) -> int:
         """
@@ -475,6 +596,7 @@ class CubeTaskBoardPanel(QWidget):
     def refreshData(self) -> None:
         """按当前记账日期重新渲染看板。"""
         selected = self._selectedDate()
+        self._syncPeriodSelection()
         try:
             self._groups = self._task_service.getBoard(selected)
             period_info = self._task_service.getPeriodInfo(selected)
@@ -491,22 +613,25 @@ class CubeTaskBoardPanel(QWidget):
         }
         self._renderBoard()
         self._periodLabel.setText(self._formatPeriodSummary(period_info, selected))
-        self._entry_panel.refreshState()
+        if self._entry_panel is not None:
+            self._entry_panel.refreshState()
 
     def refreshEntryCategories(self) -> None:
         """类型字典变化后，只刷新常规录入的类型下拉（不重渲染看板）。"""
-        self._entry_panel.refreshCategories()
+        if self._entry_panel is not None:
+            self._entry_panel.refreshCategories()
 
     def refreshEntryEvents(self) -> None:
         """活动记录变化后，只刷新常规录入的「所属活动」下拉（不重渲染看板）。"""
-        self._entry_panel.refreshEventOptions()
+        if self._entry_panel is not None:
+            self._entry_panel.refreshEventOptions()
 
     def _formatPeriodSummary(self, period_info: Dict, selected: Optional[date] = None) -> str:
         """
         生成顶部周期信息文案。
 
         Args:
-            period_info: 周期类型 → CubePeriodInfo。
+            period_info: 周期类型 → TaskPeriodInfo。
             selected: 当前选择的记账日期；非今天时把「今日」改为「所选日」。
 
         Returns:
@@ -517,11 +642,11 @@ class CubeTaskBoardPanel(QWidget):
             day_prefix = "所选日"
         labels = []
         names = {"day": day_prefix, "week": "本周", "month": "本月", "cruise": "本期"}
-        for period_type, prefix in names.items():
+        for period_type in self._period_types:
             info = period_info.get(period_type)
             if info is None:
                 continue
-            labels.append(f"{prefix} {info.label}")
+            labels.append(f"{names.get(period_type, period_type)} {info.label}")
         return "｜".join(labels)
 
     def _clearBoard(self) -> None:
@@ -535,11 +660,12 @@ class CubeTaskBoardPanel(QWidget):
     def _renderBoard(self) -> None:
         """把四个同级分组按当前列数铺进网格（右边缘对齐、不留缺口）。"""
         self._clearBoard()
-        columns = self._columnCount()
+        columns = self._desiredColumns()
         self._current_columns = columns
 
         widgets: List[QWidget] = [self._buildGroupBox(view) for view in self._groups]
-        widgets.append(self._buildReservedGroup())
+        if self._include_entry:
+            widgets.append(self._buildReservedGroup())
 
         # 先清空历史列伸缩：从 2 列切到 1 列时，遗留的列伸缩会占住空白列，导致右侧出现大片缺口
         for column in range(6):
@@ -650,7 +776,7 @@ class CubeTaskBoardPanel(QWidget):
 
         columns = max(1, min(CARDS_PER_ROW, len(tasks)))
         for index, state in enumerate(tasks):
-            card = CubeTaskCard(state)
+            card = CubeTaskCard(state, self._resource_name)
             card.completeRequested.connect(self._onCompleteRequested)
             card.cancelRequested.connect(self._onCancelRequested)
             grid.addWidget(card, index // columns, index % columns)

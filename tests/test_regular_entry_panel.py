@@ -160,7 +160,7 @@ class TestRegularEntryPanel(unittest.TestCase):
         self.assertIn("支出 · 礼包", labels)
         self.assertIn("收入 · 礼包", labels)
         self.assertEqual(labels[-1], "收入 · 充值")
-        self.assertEqual(len(labels), 18)
+        self.assertEqual(len(labels), 19)
 
     def testUndoDisabledWithoutEntries(self):
         """没有录入时撤销按钮不可用。"""

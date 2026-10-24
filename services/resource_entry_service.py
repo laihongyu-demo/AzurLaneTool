@@ -112,7 +112,7 @@ class ResourceEntryService:
         Returns:
             类型选项列表。
         """
-        owned = {task.category for task in self._task_repository.findAll()}
+        owned = {task.category for task in self._task_repository.findAll(resource_type)}
 
         options: List[ResourceCategoryOption] = []
         for direction in (RESOURCE_DIRECTION_EXPENSE, RESOURCE_DIRECTION_INCOME):

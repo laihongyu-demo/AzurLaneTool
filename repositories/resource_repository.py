@@ -29,6 +29,23 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
     DAILY_TABLE = "resource_daily"
     TRANSACTION_TABLE = "resource_transaction"
     CATEGORY_TABLE = "resource_category"
+    TRADE_LICENSE_TABLE = "trade_license_purchase"
+
+    def _tableExists(self, table: str) -> bool:
+        """
+        判断表是否存在（用于旧库降级）。
+
+        Args:
+            table: 表名。
+
+        Returns:
+            存在返回 True。
+        """
+        sql = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?"
+        try:
+            return bool(DatabaseConnection.executeQuery(sql, (table,)))
+        except Exception:
+            return False
 
     def findAll(self) -> List[ResourceDailyModel]:
         """
@@ -275,7 +292,8 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
         查询最近一笔「非任务来源」的明细（供常规录入撤销使用）。
 
         任务看板写入的明细会在 ``cube_task_completion.transaction_id`` 留下引用，
-        这里用反连接把它们排除，避免撤销误伤任务卡片。
+        贸易许可证续约写入的 500 红尖尖会在 ``trade_license_purchase.transaction_id``
+        留下引用；这里用反连接把它们排除，避免撤销误伤固定来源。
 
         Args:
             resource_type: 资源类型。
@@ -286,12 +304,19 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
         Raises:
             DatabaseError: 当查询失败时抛出。
         """
+        has_trade_license = self._tableExists(self.TRADE_LICENSE_TABLE)
+        trade_join = (
+            f"LEFT JOIN {self.TRADE_LICENSE_TABLE} tl ON tl.transaction_id = t.id"
+            if has_trade_license else ""
+        )
+        trade_condition = "AND tl.id IS NULL" if has_trade_license else ""
         sql = f"""
             SELECT t.id, t.resource_type, t.direction, t.record_time, t.category,
                    t.amount, t.note, t.event_id, t.created_at, t.updated_at
             FROM {self.TRANSACTION_TABLE} t
             LEFT JOIN cube_task_completion c ON c.transaction_id = t.id
-            WHERE t.resource_type = ? AND c.id IS NULL
+            {trade_join}
+            WHERE t.resource_type = ? AND c.id IS NULL {trade_condition}
             ORDER BY t.record_time DESC, t.id DESC
             LIMIT 1
         """

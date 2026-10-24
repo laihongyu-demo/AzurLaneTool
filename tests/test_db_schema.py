@@ -52,6 +52,19 @@ CREATE TABLE resource_category (
 );
 """
 
+LEGACY_CUBE_TASK_SCHEMA = """
+CREATE TABLE cube_task (
+    code        TEXT PRIMARY KEY,
+    grp         TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    reward      INTEGER NOT NULL,
+    period_type TEXT NOT NULL,
+    category    TEXT NOT NULL,
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    active      INTEGER NOT NULL DEFAULT 1
+);
+"""
+
 LEGACY_EVENT_SCHEMA = """
 CREATE TABLE event_record (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,17 +110,23 @@ class TestSchemaBootstrap(unittest.TestCase):
             }
             transaction_columns = _columns(conn, "resource_transaction")
             event_columns = _columns(conn, "event_record")
+            task_columns = _columns(conn, "cube_task")
+            red_tasks = conn.execute(
+                "SELECT COUNT(*) FROM cube_task WHERE resource_type = 'red_gem'"
+            ).fetchone()[0]
         finally:
             conn.close()
 
         self.assertTrue(
             {"resource_daily", "resource_transaction", "resource_category",
-             "commander_level_exp", "event_record"}
+             "commander_level_exp", "event_record", "trade_license_purchase"}
             <= tables
         )
         self.assertIn("record_time", transaction_columns)
         self.assertNotIn("record_date", transaction_columns)
         self.assertIn("event_id", transaction_columns)
+        self.assertIn("resource_type", task_columns)
+        self.assertEqual(red_tasks, 6)
         self.assertTrue(
             {"build_cost", "use_ticket", "ticket_build_count", "build_count"}
             <= event_columns
@@ -165,6 +184,43 @@ class TestSchemaBootstrap(unittest.TestCase):
         self.assertEqual(daily[1], ("2024-10-17", "2024-10-17 00:00:00"))
         self.assertIn("idx_resource_transaction_time", indexes)
         self.assertIn("idx_resource_transaction_event", indexes)
+
+    def testUpgradesLegacyCubeTaskResourceType(self):
+        """旧 cube_task 补 resource_type / short_name，并写入红尖尖任务。"""
+        conn = sqlite3.connect(self._db_path)
+        try:
+            conn.executescript(LEGACY_CUBE_TASK_SCHEMA)
+            conn.execute(
+                "INSERT INTO cube_task (code, grp, name, reward, period_type, category)"
+                " VALUES ('legacy_task', 'daily', '旧任务', 1, 'day', '日常任务')"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        ensureResourceStatisticsSchema(self._db_path)
+
+        conn = sqlite3.connect(self._db_path)
+        try:
+            columns = _columns(conn, "cube_task")
+            legacy = conn.execute(
+                "SELECT resource_type, short_name FROM cube_task WHERE code = 'legacy_task'"
+            ).fetchone()
+            red_count = conn.execute(
+                "SELECT COUNT(*) FROM cube_task WHERE resource_type = 'red_gem'"
+            ).fetchone()[0]
+            trade_table = conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table'"
+                " AND name='trade_license_purchase'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        self.assertIn("resource_type", columns)
+        self.assertIn("short_name", columns)
+        self.assertEqual(legacy, ("cube", ""))
+        self.assertEqual(red_count, 6)
+        self.assertEqual(trade_table, 1)
 
     def testUpgradeIsIdempotent(self):
         """重复执行不报错、不重复改数据。"""
@@ -302,7 +358,7 @@ class TestCategoryDictionarySchema(unittest.TestCase):
         finally:
             conn.close()
 
-        self.assertEqual(total, 41)
+        self.assertEqual(total, 43)
         self.assertEqual(rows[-2], ("补给兑换", 9500, 1))
         self.assertEqual(rows[-1], ("未知", 9999, 0))
         self.assertEqual(renamed, 0)

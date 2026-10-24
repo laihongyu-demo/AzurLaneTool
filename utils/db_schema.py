@@ -1,8 +1,9 @@
 """
 数据库表结构引导模块。
 
-负责在应用启动时确保资源统计 / 魔方任务看板相关表存在（幂等 DDL），并把早期版本的表结构
-就地升级到当前口径（明细精确到秒），同时提供"表 / 列不存在"异常的识别辅助。
+负责在应用启动时确保资源统计 / 任务看板 / 贸易许可证相关表存在（幂等 DDL），
+并把早期版本的表结构就地升级到当前口径（明细精确到秒），同时提供"表 / 列不存在"
+异常的识别辅助。
 """
 
 import sqlite3
@@ -13,6 +14,7 @@ from utils.sql_loader import loadSqlFile
 
 RESOURCE_SCHEMA_FILE = "CreateResourceStatisticsTables.sql"
 CUBE_TASK_SCHEMA_FILE = "CreateCubeTaskTables.sql"
+TRADE_LICENSE_SCHEMA_FILE = "CreateTradeLicenseTable.sql"
 EVENT_SCHEMA_FILE = "CreateEventRecordTable.sql"
 CATEGORY_SEED_FILE = "SeedResourceCategories.sql"
 
@@ -22,17 +24,20 @@ LEGACY_DATE_LENGTH = 10
 
 def ensureResourceStatisticsSchema(db_path: Optional[str] = None) -> None:
     """
-    确保资源统计与魔方任务看板相关表、索引与任务定义就位，并把旧结构升级到当前口径。
+    确保资源统计、魔方 / 红尖尖任务看板与贸易许可证相关表、索引与任务定义就位，
+    并把旧结构升级到当前口径。
 
-    执行 ``sql/CreateResourceStatisticsTables.sql``、``sql/CreateCubeTaskTables.sql`` 与
-    ``sql/SeedResourceCategories.sql``（DDL 全部 ``IF NOT EXISTS``，任务定义用
-    ``ON CONFLICT DO UPDATE``），随后运行幂等升级步骤：
+    执行 ``sql/CreateResourceStatisticsTables.sql``、``sql/CreateCubeTaskTables.sql``、
+    ``sql/CreateTradeLicenseTable.sql`` 与 ``sql/SeedResourceCategories.sql``
+    （DDL 全部 ``IF NOT EXISTS``，任务定义用 ``ON CONFLICT DO UPDATE``），
+    随后运行幂等升级步骤：
 
     - 明细的 ``record_date``（仅日期）→ ``record_time``（``yyyy-MM-dd HH:mm:ss``）
     - 日汇总补齐 ``last_record_time``（该日最后一笔的准确时刻）
     - 明细补齐 ``event_id``（活动关联，可空）
     - 活动记录的 ``draws``（抽数）重命名为 ``build_count``（建造次数）
     - 活动记录补齐 ``build_cost`` / ``use_ticket`` / ``ticket_build_count``（单耗与券抽）
+    - 任务定义补齐 ``short_name`` / ``resource_type``
     - 类型字典补齐 ``is_active``（1 启用 / 0 停用）
     - 重建明细上的时间索引
 
@@ -49,6 +54,7 @@ def ensureResourceStatisticsSchema(db_path: Optional[str] = None) -> None:
     """
     resource_sql = loadSqlFile(RESOURCE_SCHEMA_FILE)
     task_sql = loadSqlFile(CUBE_TASK_SCHEMA_FILE)
+    trade_license_sql = loadSqlFile(TRADE_LICENSE_SCHEMA_FILE)
     event_sql = loadSqlFile(EVENT_SCHEMA_FILE)
     category_sql = loadSqlFile(CATEGORY_SEED_FILE)
     path = db_path or DatabaseConnection.getDbPath()
@@ -61,6 +67,7 @@ def ensureResourceStatisticsSchema(db_path: Optional[str] = None) -> None:
         _upgradeEventRecordSchema(conn)
         conn.executescript(resource_sql)
         conn.executescript(task_sql)
+        conn.executescript(trade_license_sql)
         conn.executescript(event_sql)
         _upgradeResourceCategorySchema(conn)
         # 类型字典仅在为空时播种；已有数据时不再改写顺序/名称/停用状态
@@ -114,9 +121,10 @@ def _upgradeLegacySchema(conn: sqlite3.Connection) -> None:
 
 def _upgradeCubeTaskSchema(conn: sqlite3.Connection) -> None:
     """
-    为早期的 ``cube_task`` 补 ``short_name`` 列（看板卡片短标签）。
+    为早期的 ``cube_task`` 补 ``short_name`` 与 ``resource_type`` 列。
 
-    新库由 SQL 脚本直接建出该列，这里只处理已存在但缺列的老库；可重复执行。
+    新库由 SQL 脚本直接建出这两列，这里只处理已存在但缺列的老库；可重复执行。
+    老库的现有任务默认归到 ``cube``，红尖尖任务由后续 SQL 脚本幂等写入。
 
     Args:
         conn: 数据库连接。
@@ -124,6 +132,10 @@ def _upgradeCubeTaskSchema(conn: sqlite3.Connection) -> None:
     columns = _tableColumns(conn, "cube_task")
     if columns and "short_name" not in columns:
         conn.execute("ALTER TABLE cube_task ADD COLUMN short_name TEXT NOT NULL DEFAULT ''")
+    if columns and "resource_type" not in columns:
+        conn.execute(
+            "ALTER TABLE cube_task ADD COLUMN resource_type TEXT NOT NULL DEFAULT 'cube'"
+        )
 
 
 def _upgradeEventTransactionColumn(conn: sqlite3.Connection) -> None:

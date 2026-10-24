@@ -200,7 +200,7 @@ class TestCategoryActions(_TempSettingsCase):
         ):
             section._createBtn.click()
 
-        self.assertEqual(self._query("SELECT COUNT(*) FROM resource_category")[0][0], 41)
+        self.assertEqual(self._query("SELECT COUNT(*) FROM resource_category")[0][0], 43)
         self.assertEqual(changed, [])
 
     def testCreateDuplicateShowsWarning(self):
@@ -216,7 +216,7 @@ class TestCategoryActions(_TempSettingsCase):
 
         warning.assert_called_once()
         self.assertIn("已存在", warning.call_args[0][2])
-        self.assertEqual(self._query("SELECT COUNT(*) FROM resource_category")[0][0], 41)
+        self.assertEqual(self._query("SELECT COUNT(*) FROM resource_category")[0][0], 43)
 
     def testRenameThroughDialogSyncsTransactions(self):
         """改名弹窗预填原名，成功后同步明细并刷新列表。"""

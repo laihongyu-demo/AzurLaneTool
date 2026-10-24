@@ -15,14 +15,16 @@ class CubeTaskModel(BaseModel):
     """
     任务定义模型。
 
-    对应 ``cube_task`` 表，由 ``sql/CreateCubeTaskTables.sql`` 初始化，共 18 项。
+    对应 ``cube_task`` 表，由 ``sql/CreateCubeTaskTables.sql`` 初始化；
+    该表为历史表名，现在同时承载魔方与红尖尖的固定奖励任务。
 
     Attributes:
         code: 任务编码，主键（如 ``daily_build_once``）。
+        resource_type: 资源类型，``cube`` 或 ``red_gem``。
         grp: 分组，``daily`` / ``weekly`` / ``signin`` / ``cruise``。
         name: 任务完整名称（用于 tooltip 与明细备注）。
         short_name: 看板卡片用的短标签（单行显示）。
-        reward: 完成奖励（魔方数量）。
+        reward: 完成奖励数量。
         period_type: 周期类型，``day`` / ``week`` / ``month`` / ``cruise``。
         category: 写入明细时使用的来源名。
         sort_order: 排序序号。
@@ -30,6 +32,7 @@ class CubeTaskModel(BaseModel):
     """
 
     code: str = ""
+    resource_type: str = "cube"
     grp: str = ""
     name: str = ""
     short_name: str = ""

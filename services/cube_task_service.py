@@ -1,186 +1,42 @@
 """
-魔方任务看板业务逻辑层模块。
+资源任务看板业务逻辑层模块。
 
 负责周期键计算（日 / ISO 周 / 自然月 / 双月巡游期）、看板状态汇总，
-以及「单击完成 / 双击取消」背后的记账与回滚。
+以及「单击完成 / 双击取消」背后的记账与回滚。同一套服务按
+``resource_type`` 复用于魔方与红尖尖。
 """
 
-import calendar
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from datetime import date, datetime
+from typing import Dict, List, Optional
 
 from models.cube_task_model import CubeTaskCompletionModel, CubeTaskModel
 from models.resource_model import ResourceTransactionModel
+from models.task_period import TaskPeriodInfo
 from repositories.cube_task_repository import CubeTaskRepository
 from repositories.resource_repository import ResourceRepository
+from services.world_cruise_service import WorldCruiseService
 from utils import time_source
 from utils.constants import (
-    CRUISE_PERIOD_MONTHS, RECORD_DATE_FORMAT, RECORD_TIME_FORMAT, RESOURCE_DIRECTION_INCOME,
-    RESOURCE_TYPE_CUBE, TASK_DISPLAY_GROUPS, TASK_PERIOD_CRUISE, TASK_PERIOD_DAY,
-    TASK_PERIOD_MONTH, TASK_PERIOD_WEEK, TASK_GROUP_TITLES,
+    RECORD_DATE_FORMAT, RECORD_TIME_FORMAT, RESOURCE_DIRECTION_INCOME,
+    RESOURCE_DISPLAY_NAMES, RESOURCE_TYPE_CUBE, TASK_DISPLAY_GROUPS_BY_RESOURCE,
+    TASK_GROUP_TITLES, TASK_PERIOD_CRUISE, TASK_PERIODS,
 )
 from utils.db_connection import DatabaseContext
 from utils.db_schema import isMissingColumnError, isMissingTableError
 from utils.exceptions import DatabaseError, ValidationError
+from utils.task_period import (
+    addMonths, buildPeriodInfo, buildPeriodKey, cruisePeriodEnd, cruisePeriodStart,
+    formatPeriodLabel, monthRange, periodRange, weekRange,
+)
 
-PERIOD_TYPES = (TASK_PERIOD_DAY, TASK_PERIOD_WEEK, TASK_PERIOD_MONTH, TASK_PERIOD_CRUISE)
+PERIOD_TYPES = TASK_PERIODS
 
-
-# --------------------------------------------------------------- 周期计算
-
-
-def addMonths(value: date, months: int) -> date:
-    """
-    在日期上增减自然月（月末自动取该月最后一天）。
-
-    Args:
-        value: 基准日期。
-        months: 增减的月数（可为负）。
-
-    Returns:
-        计算后的日期。
-    """
-    month_index = value.month - 1 + months
-    year = value.year + month_index // 12
-    month = month_index % 12 + 1
-    day = min(value.day, calendar.monthrange(year, month)[1])
-    return date(year, month, day)
-
-
-def cruisePeriodStart(when: date) -> date:
-    """
-    计算世界巡游「本期」的起始日。
-
-    规则：每 2 个自然月为一期，起点为偶数月 1 日 00:00。
-    例如 10 月 → 当年 10-01；12 月 → 当年 12-01（跨年到次年 1 月）；
-    1 月 → 上一年 12-01。
-
-    Args:
-        when: 任意日期。
-
-    Returns:
-        本期起始日。
-    """
-    month = when.month - (when.month % CRUISE_PERIOD_MONTHS)
-    if month <= 0:
-        return date(when.year - 1, 12, 1)
-    return date(when.year, month, 1)
-
-
-def cruisePeriodEnd(when: date) -> date:
-    """
-    计算世界巡游「本期」的结束日（含）。
-
-    Args:
-        when: 任意日期。
-
-    Returns:
-        本期结束日。
-    """
-    return addMonths(cruisePeriodStart(when), CRUISE_PERIOD_MONTHS) - timedelta(days=1)
-
-
-def weekRange(when: date) -> Tuple[date, date]:
-    """
-    计算 ISO 周（周一 ~ 周日）的起止日期。
-
-    Args:
-        when: 任意日期。
-
-    Returns:
-        ``(周一, 周日)``。
-    """
-    monday = when - timedelta(days=when.weekday())
-    return monday, monday + timedelta(days=6)
-
-
-def monthRange(when: date) -> Tuple[date, date]:
-    """
-    计算自然月的起止日期。
-
-    Args:
-        when: 任意日期。
-
-    Returns:
-        ``(1 日, 月末)``。
-    """
-    last_day = calendar.monthrange(when.year, when.month)[1]
-    return date(when.year, when.month, 1), date(when.year, when.month, last_day)
-
-
-def buildPeriodKey(period_type: str, when: date) -> str:
-    """
-    按周期类型生成周期键。
-
-    Args:
-        period_type: ``day`` / ``week`` / ``month`` / ``cruise``。
-        when: 归属日期。
-
-    Returns:
-        周期键：``2026-10-17`` / ``2026-W42`` / ``2026-10``（月与期为 ``yyyy-MM``）。
-
-    Raises:
-        ValidationError: 周期类型未知时抛出。
-    """
-    if period_type == TASK_PERIOD_DAY:
-        return when.strftime(RECORD_DATE_FORMAT)
-    if period_type == TASK_PERIOD_WEEK:
-        iso_year, iso_week, _ = when.isocalendar()
-        return f"{iso_year:04d}-W{iso_week:02d}"
-    if period_type == TASK_PERIOD_MONTH:
-        return when.strftime("%Y-%m")
-    if period_type == TASK_PERIOD_CRUISE:
-        return cruisePeriodStart(when).strftime("%Y-%m")
-    raise ValidationError(f"未知的周期类型: {period_type}")
-
-
-def periodRange(period_type: str, when: date) -> Tuple[date, date]:
-    """
-    计算某周期的起止日期（用于期初对齐脚本扫描区间）。
-
-    Args:
-        period_type: 周期类型。
-        when: 归属日期。
-
-    Returns:
-        ``(起始日, 结束日)``，均含当天。
-
-    Raises:
-        ValidationError: 周期类型未知时抛出。
-    """
-    if period_type == TASK_PERIOD_DAY:
-        return when, when
-    if period_type == TASK_PERIOD_WEEK:
-        return weekRange(when)
-    if period_type == TASK_PERIOD_MONTH:
-        return monthRange(when)
-    if period_type == TASK_PERIOD_CRUISE:
-        return cruisePeriodStart(when), cruisePeriodEnd(when)
-    raise ValidationError(f"未知的周期类型: {period_type}")
+# 兼容旧调用方：周期信息值对象已迁到 models/task_period.py
+CubePeriodInfo = TaskPeriodInfo
 
 
 # ------------------------------------------------------------------ 视图对象
-
-
-@dataclass
-class CubePeriodInfo:
-    """
-    周期展示信息。
-
-    Attributes:
-        period_type: 周期类型。
-        period_key: 周期键。
-        label: 展示文案（如 ``2026 第 42 周（10-12 ~ 10-18）``）。
-        start: 起始日期 ``yyyy-MM-dd``。
-        end: 结束日期 ``yyyy-MM-dd``。
-    """
-
-    period_type: str
-    period_key: str
-    label: str
-    start: str
-    end: str
 
 
 @dataclass
@@ -214,8 +70,8 @@ class CubeTaskGroupView:
         key: 分组键。
         title: 分组标题。
         tasks: 分组内的任务状态列表。
-        earned: 本周期已获得的魔方数。
-        total: 本周期应得的魔方总数。
+        earned: 本周期已获得的资源数量。
+        total: 本周期应得的资源总数。
     """
 
     key: str
@@ -261,7 +117,10 @@ class CubeTaskService:
     def __init__(
         self,
         task_repository: Optional[CubeTaskRepository] = None,
-        resource_repository: Optional[ResourceRepository] = None
+        resource_repository: Optional[ResourceRepository] = None,
+        resource_type: str = RESOURCE_TYPE_CUBE,
+        display_groups=None,
+        world_cruise_service: Optional[WorldCruiseService] = None,
     ):
         """
         初始化任务看板服务。
@@ -269,9 +128,27 @@ class CubeTaskService:
         Args:
             task_repository: 任务定义 / 完成记录数据访问实例。
             resource_repository: 资源明细数据访问实例。
+            resource_type: 资源类型，``cube`` 或 ``red_gem``。
+            display_groups: 展示分组；为空时按资源类型取默认值。
+            world_cruise_service: 世界巡游档期服务。
         """
         self._task_repository = task_repository or CubeTaskRepository()
         self._resource_repository = resource_repository or ResourceRepository()
+        self._resource_type = resource_type
+        self._display_groups = tuple(
+            display_groups or TASK_DISPLAY_GROUPS_BY_RESOURCE.get(resource_type, ())
+        )
+        self._world_cruise_service = world_cruise_service or WorldCruiseService()
+
+    @property
+    def resourceType(self) -> str:
+        """
+        当前服务对应的资源类型。
+
+        Returns:
+            ``cube`` 或 ``red_gem``。
+        """
+        return self._resource_type
 
     # ------------------------------------------------------------- 周期信息
 
@@ -289,11 +166,26 @@ class CubeTaskService:
             ValidationError: 周期类型异常时抛出（理论上不会发生）。
         """
         return {
-            period_type: buildPeriodKey(period_type, record_date)
+            period_type: self._periodKey(period_type, record_date)
             for period_type in PERIOD_TYPES
         }
 
-    def getPeriodInfo(self, record_date: date) -> Dict[str, CubePeriodInfo]:
+    def _periodKey(self, period_type: str, when: date) -> str:
+        """
+        生成单个周期键；巡游期统一走 `WorldCruiseService`。
+
+        Args:
+            period_type: 周期类型。
+            when: 归属日期。
+
+        Returns:
+            周期键。
+        """
+        if period_type == TASK_PERIOD_CRUISE:
+            return self._world_cruise_service.getPeriod(when).key
+        return buildPeriodKey(period_type, when)
+
+    def getPeriodInfo(self, record_date: date) -> Dict[str, TaskPeriodInfo]:
         """
         生成 4 个周期的展示信息。
 
@@ -303,38 +195,20 @@ class CubeTaskService:
         Returns:
             周期类型 → 周期信息。
         """
-        info: Dict[str, CubePeriodInfo] = {}
+        info: Dict[str, TaskPeriodInfo] = {}
         for period_type in PERIOD_TYPES:
-            start, end = periodRange(period_type, record_date)
-            info[period_type] = CubePeriodInfo(
-                period_type=period_type,
-                period_key=buildPeriodKey(period_type, record_date),
-                label=self._formatPeriodLabel(period_type, start, end),
-                start=start.strftime(RECORD_DATE_FORMAT),
-                end=end.strftime(RECORD_DATE_FORMAT),
-            )
+            if period_type == TASK_PERIOD_CRUISE:
+                period = self._world_cruise_service.getPeriod(record_date)
+                info[period_type] = TaskPeriodInfo(
+                    period_type=period_type,
+                    period_key=period.key,
+                    label=period.label,
+                    start=period.start.strftime(RECORD_DATE_FORMAT),
+                    end=period.end.strftime(RECORD_DATE_FORMAT),
+                )
+            else:
+                info[period_type] = buildPeriodInfo(period_type, record_date)
         return info
-
-    def _formatPeriodLabel(self, period_type: str, start: date, end: date) -> str:
-        """
-        生成周期展示文案。
-
-        Args:
-            period_type: 周期类型。
-            start: 起始日。
-            end: 结束日。
-
-        Returns:
-            展示文案。
-        """
-        if period_type == TASK_PERIOD_DAY:
-            return start.strftime(RECORD_DATE_FORMAT)
-        if period_type == TASK_PERIOD_WEEK:
-            iso_year, iso_week, _ = start.isocalendar()
-            return f"{iso_year} 第 {iso_week} 周（{start:%m-%d} ~ {end:%m-%d}）"
-        if period_type == TASK_PERIOD_MONTH:
-            return start.strftime("%Y-%m")
-        return f"{start:%Y-%m-%d} ~ {end:%Y-%m-%d}"
 
     # --------------------------------------------------------------- 看板
 
@@ -349,7 +223,7 @@ class CubeTaskService:
             分组视图列表；表缺失时返回空分组。
         """
         try:
-            tasks = self._task_repository.findAll()
+            tasks = self._task_repository.findAll(self._resource_type)
             periods = self.getPeriodKeys(record_date)
             completions = self._task_repository.findCompletionsByPeriodKeys(
                 list(set(periods.values()))
@@ -380,7 +254,7 @@ class CubeTaskService:
                 raise
 
         groups: List[CubeTaskGroupView] = []
-        for group_key, title, group_codes in TASK_DISPLAY_GROUPS:
+        for group_key, title, group_codes in self._display_groups:
             view = CubeTaskGroupView(key=group_key, title=title)
             for task in tasks:
                 if task.grp not in group_codes:
@@ -411,7 +285,7 @@ class CubeTaskService:
         """
         return [
             CubeTaskGroupView(key=key, title=title)
-            for key, title, _codes in TASK_DISPLAY_GROUPS
+            for key, title, _codes in self._display_groups
         ]
 
     # ------------------------------------------------------------- 写操作
@@ -440,8 +314,10 @@ class CubeTaskService:
         task = self._task_repository.findByCode(task_code)
         if task is None:
             raise ValidationError(f"任务不存在或已停用: {task_code}")
+        if task.resource_type != self._resource_type:
+            raise ValidationError(f"任务「{task.name}」不属于当前资源")
 
-        period_key = buildPeriodKey(task.period_type, moment.date())
+        period_key = self.getPeriodKeys(moment.date())[task.period_type]
         existing = self._task_repository.findCompletion(task_code, period_key)
         if existing is not None:
             raise ValidationError(f"本期已完成「{task.name}」，双击可取消")
@@ -449,7 +325,7 @@ class CubeTaskService:
         record_date_text = moment.strftime(RECORD_DATE_FORMAT)
         record_time_text = moment.strftime(RECORD_TIME_FORMAT)
         transaction = ResourceTransactionModel(
-            resource_type=RESOURCE_TYPE_CUBE,
+            resource_type=self._resource_type,
             direction=RESOURCE_DIRECTION_INCOME,
             record_time=record_time_text,
             category=task.category,
@@ -465,7 +341,7 @@ class CubeTaskService:
         with DatabaseContext(self._task_repository.dbPath) as conn:
             transaction_id = self._resource_repository.insertTransaction(transaction, conn)
             self._resource_repository.upsertDetailDaily(
-                RESOURCE_TYPE_CUBE, record_date_text, record_time_text, conn
+                self._resource_type, record_date_text, record_time_text, conn
             )
             completion.transaction_id = transaction_id
             completion_id = self._task_repository.insertCompletion(completion, conn)
@@ -473,10 +349,13 @@ class CubeTaskService:
                 # 并发下的兜底：唯一约束拒绝了重复完成，回滚整笔写入
                 raise ValidationError(f"本期已完成「{task.name}」，双击可取消")
 
+        resource_name = RESOURCE_DISPLAY_NAMES.get(self._resource_type, self._resource_type)
         return CubeTaskWriteResult(
             success=True,
             task_code=task_code,
-            message=f"已完成「{task.name}」，魔方 +{task.reward}（{record_time_text}）",
+            message=(
+                f"已完成「{task.name}」，{resource_name} +{task.reward}（{record_time_text}）"
+            ),
         )
 
     def cancelTask(self, task_code: str, record_date: date) -> CubeTaskWriteResult:
@@ -497,8 +376,10 @@ class CubeTaskService:
         task = self._task_repository.findByCode(task_code)
         if task is None:
             raise ValidationError(f"任务不存在或已停用: {task_code}")
+        if task.resource_type != self._resource_type:
+            raise ValidationError(f"任务「{task.name}」不属于当前资源")
 
-        period_key = buildPeriodKey(task.period_type, record_date)
+        period_key = self.getPeriodKeys(record_date)[task.period_type]
         completion = self._task_repository.findCompletion(task_code, period_key)
         if completion is None:
             raise ValidationError(f"「{task.name}」本期尚未完成")
@@ -514,9 +395,10 @@ class CubeTaskService:
                 self._resource_repository.deleteTransaction(transaction.id, conn)
             self._task_repository.deleteCompletion(completion.id, conn)
             self._resource_repository.recomputeLastRecordTime(
-                RESOURCE_TYPE_CUBE, target_date, conn
+                self._resource_type, target_date, conn
             )
 
+        resource_name = RESOURCE_DISPLAY_NAMES.get(self._resource_type, self._resource_type)
         if transaction is None:
             return CubeTaskWriteResult(
                 success=True,
@@ -528,7 +410,7 @@ class CubeTaskService:
             task_code=task_code,
             message=(
                 f"已取消「{task.name}」，并删除 {transaction.record_time} 的 "
-                f"{transaction.amount} 个魔方记录"
+                f"{transaction.amount} 个{resource_name}记录"
             ),
         )
 
