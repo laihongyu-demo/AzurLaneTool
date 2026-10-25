@@ -409,6 +409,21 @@ class TestStatisticsCardWiring(unittest.TestCase):
         self.assertEqual(panel._expEfficiencyCard.value(), "11,336/天")
         self.assertIn("近 30 天日均", panel._expEfficiencyCard.toolTip())
 
+    def testExpEfficiencyCardHasNoBadge(self):
+        """T-27：指级效率卡只换文本与提示，不加角标（#23 决策：趋势只放 tooltip）。"""
+        tooltip = "近 30 天日均 11,336/天\n近期节奏 14,000/天｜趋势 加速 +24%"
+        panel = self._buildPanel(
+            commander_service=_StubCommanderService(
+                "163（77,057/354,350）", "指挥官tip",
+                efficiency_text="11,336/天", efficiency_tooltip=tooltip,
+            ),
+        )
+
+        self.assertEqual(panel._expEfficiencyCard.value(), "11,336/天")
+        self.assertEqual(panel._expEfficiencyCard.toolTip(), tooltip)
+        self.assertEqual(panel._expEfficiencyCard.badgeText(), "")
+        self.assertEqual(panel._expEfficiencyCard.titleBadgeText(), "")
+
     def testExpEfficiencyDegradesToDash(self):
         """数据不足时卡片显示 -，不抛异常。"""
         panel = self._buildPanel()

@@ -88,14 +88,36 @@ COMMANDER_LEVEL_MIN = 1
 COMMANDER_LEVEL_MAX = 200
 COMMANDER_SNAPSHOT_RECENT_LIMIT = 30
 
-# ---- 指级效率（#16）----
+# ---- 指级效率（#16 / #23）----
+#
+# 口径见 docs/指级效率算法优化方案_20261018.md（v2）与
+# docs/20261025_指级效率回测报告.md（#23 P2 回测）。修改下列常量必须同步回测报告，
+# 或在提交说明里写清依据。
 
-# 窗口天数：取最近 30 天内的快照算日均（口径见 docs/指级效率算法方案_20261018.md §5）
+# 慢窗口天数：取最近 30 天内的快照算日均（主值，语义与 v1 完全一致）
 EXP_EFFICIENCY_WINDOW_DAYS = 30
 # 少于两条快照无法构成区间，直接降级
 EXP_EFFICIENCY_MIN_SAMPLES = 2
 # 卡片单位
 EXP_EFFICIENCY_UNIT = "/天"
+
+# 近期节奏（fast）：从最新有效快照往回走，遇到超过 7 天的缺口就重置，
+# 最多回看 14 天；至少 2 条、跨度 >=1 天才给值（宁可 None，不拿旧点冒充"近期"）
+EXP_EFFICIENCY_FAST_GAP_DAYS = 7
+EXP_EFFICIENCY_FAST_CAP_DAYS = 14
+EXP_EFFICIENCY_FAST_MIN_SAMPLES = 2
+EXP_EFFICIENCY_FAST_MIN_SPAN_DAYS = 1.0
+
+# 趋势（trend = fast / slow）：偏离 30 天值 ±25% 才判定，
+# 且要求连续块 >=3 条、跨度 >=3 天，避免"一条爆肝记录 + 1 天跨度"就报加速
+EXP_EFFICIENCY_TREND_UP_RATIO = 1.25
+EXP_EFFICIENCY_TREND_DOWN_RATIO = 0.75
+EXP_EFFICIENCY_TREND_MIN_SAMPLES = 3
+EXP_EFFICIENCY_TREND_MIN_SPAN_DAYS = 3.0
+
+# 数据质量提示阈值：窗口内最大缺口 >=7 天、数据截止距今 >=7 天才进 tooltip
+EXP_EFFICIENCY_GAP_HINT_DAYS = 7
+EXP_EFFICIENCY_STALE_DAYS = 7
 
 # ---- 魔方任务看板 ----
 

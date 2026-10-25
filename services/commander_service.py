@@ -16,8 +16,13 @@ from repositories.commander_repository import CommanderRepository
 from utils import time_source
 from utils.constants import (
     COMMANDER_LEVEL_MAX, COMMANDER_LEVEL_MIN, COMMANDER_SNAPSHOT_RECENT_LIMIT,
-    EXP_EFFICIENCY_MIN_SAMPLES, EXP_EFFICIENCY_UNIT, EXP_EFFICIENCY_WINDOW_DAYS,
-    STATISTICS_DATETIME_FORMAT,
+    EXP_EFFICIENCY_FAST_CAP_DAYS, EXP_EFFICIENCY_FAST_GAP_DAYS,
+    EXP_EFFICIENCY_FAST_MIN_SAMPLES, EXP_EFFICIENCY_FAST_MIN_SPAN_DAYS,
+    EXP_EFFICIENCY_GAP_HINT_DAYS, EXP_EFFICIENCY_MIN_SAMPLES,
+    EXP_EFFICIENCY_STALE_DAYS, EXP_EFFICIENCY_TREND_DOWN_RATIO,
+    EXP_EFFICIENCY_TREND_MIN_SAMPLES, EXP_EFFICIENCY_TREND_MIN_SPAN_DAYS,
+    EXP_EFFICIENCY_TREND_UP_RATIO, EXP_EFFICIENCY_UNIT,
+    EXP_EFFICIENCY_WINDOW_DAYS, STATISTICS_DATETIME_FORMAT,
 )
 from utils.db_schema import isMissingColumnError, isMissingTableError
 from utils.exceptions import DatabaseError, ValidationError
@@ -27,6 +32,11 @@ from utils.unit_formatter import formatExact
 # 预计升级 / 可升级是信息型（蓝），已满级是完成态（绿）。
 COMMANDER_BADGE_TONE_INFO = "info"
 COMMANDER_BADGE_TONE_SUCCESS = "success"
+
+# 趋势档位（#23）：fast/slow 偏离 30 天值 ±25% 才判定，其余记平稳。
+TREND_ACCELERATING = "accelerating"
+TREND_DECELERATING = "decelerating"
+TREND_STABLE = "stable"
 
 
 @dataclass
@@ -95,20 +105,34 @@ class CommanderLevelBadge:
 @dataclass
 class ExpEfficiency:
     """
-    指级效率计算结果（#16）。
+    指级效率计算结果（#16 v1，字段扩展见 #23 v2）。
 
-    口径：最近 `EXP_EFFICIENCY_WINDOW_DAYS` 天内的「绝对经验差 ÷ 实际跨度」。
-    右端点取**最新快照**而非今天，避免"很久没记录"被当成"没肝"。
+    ``rate_per_day`` 是**主值**，口径与 v1 完全一致：最近
+    `EXP_EFFICIENCY_WINDOW_DAYS` 天内的「绝对经验差 ÷ 实际跨度」，右端点取
+    **最新有效快照**而非今天，避免"很久没记录"被当成"没肝"。
+
+    v2 只追加信号层字段（近期节奏 / 趋势 / 缺口 / 新鲜度 / 异常隔离），
+    不改变主值语义，也不参与主值计算。
 
     Attributes:
-        rate_per_day: 日均经验；降级时为 None。
-        start_time: 区间起点快照时刻（``yyyy-MM-dd HH:mm``）。
-        end_time: 区间终点（最新快照）时刻。
-        span_days: 实际跨度（天，含小数）。
-        sample_count: 区间内去重后的快照条数。
+        rate_per_day: 慢窗口日均经验（主值）；降级时为 None。
+        start_time: 慢窗口起点快照时刻（``yyyy-MM-dd HH:mm``）。
+        end_time: 慢窗口终点（最新有效快照）时刻。
+        span_days: 慢窗口实际跨度（天，含小数）。
+        sample_count: 慢窗口内去重后的快照条数。
         cumulative_rate: 全程日均（首条到末条），供 tooltip 对照；样本不足时为 None。
-        skipped: 因等级无法换算而被跳过的快照条数。
+        skipped: 因等级无法换算而被跳过的快照条数（v1 语义）。
         degraded_reason: 降级原因；正常时为 None。
+        fast_rate_per_day: 近期连续块日均；块内不足两条或跨度不足时为 None。
+        fast_start_time: 近期块起点时刻。
+        fast_end_time: 近期块终点时刻。
+        fast_span_days: 近期块跨度（天）。
+        fast_sample_count: 近期块内快照条数。
+        trend: ``accelerating`` / ``decelerating`` / ``stable``；样本不足时为 None。
+        trend_ratio: ``fast / slow``；未判定趋势时为 None。
+        gap_days: 慢窗口内相邻有效快照的最大间隔（天）；不足两条时为 None。
+        stale_days: 数据截止（最新有效快照）距今天数（向下取整，最小 0）。
+        invalid_count: 被隔离的异常快照条数（经验越界 / 绝对经验回退等）。
     """
 
     rate_per_day: Optional[int] = None
@@ -119,6 +143,17 @@ class ExpEfficiency:
     cumulative_rate: Optional[int] = None
     skipped: int = 0
     degraded_reason: Optional[str] = None
+
+    fast_rate_per_day: Optional[int] = None
+    fast_start_time: Optional[str] = None
+    fast_end_time: Optional[str] = None
+    fast_span_days: Optional[float] = None
+    fast_sample_count: int = 0
+    trend: Optional[str] = None
+    trend_ratio: Optional[float] = None
+    gap_days: Optional[float] = None
+    stale_days: Optional[int] = None
+    invalid_count: int = 0
 
 
 class CommanderService:
@@ -140,9 +175,10 @@ class CommanderService:
         # 等级基准是只读配置表；逐条快照换算绝对经验时会按等级反复查询，
         # 而每次查询都会新建 SQLite 连接（约 1ms），500+ 条快照就是半秒级开销。
         self._level_exp_cache: Dict[int, Optional[CommanderLevelExpModel]] = {}
-        # 指级效率的中间结果：一次刷新会取卡片文本、卡片提示与升级预估三次，
-        # 快照写入（本服务内）后失效，避免重复扫描全部快照。
+        # 指级效率的中间结果：一次刷新会取卡片文本、卡片提示与升级情景三次，
+        # 快照写入（本服务内）后失效；stale_days 依赖"今天"，因此跨天也要失效。
         self._efficiency_cache: Optional[ExpEfficiency] = None
+        self._efficiency_cache_date: Optional[date] = None
 
     def getLatestSnapshot(self) -> Optional[CommanderSnapshotModel]:
         """
@@ -437,8 +473,8 @@ class CommanderService:
         生成「指挥官等级」看板卡片悬停提示。
 
         卡片本身已经展示「等级（当前经验/需求经验）」，标题角标展示「预计 X 天后升级」，
-        所以提示里不再重复这些内容，只补充升级还差多少、进度、效率不足时的说明，
-        以及记录时间。
+        所以提示里不再重复这些内容，只补充升级还差多少、进度、效率不足时的说明、
+        「若维持近期节奏」情景（#23），以及记录时间。
 
         Returns:
             提示文本。
@@ -455,6 +491,9 @@ class CommanderService:
             parts.append("升级所需经验未知（缺少该等级的基准数据）")
         if overview.progress_rate is not None:
             parts.append(f"进度 {overview.progress_rate:.1f}%")
+        scenario = self.getUpgradeScenario(overview.remaining_exp)
+        if scenario:
+            parts.append(scenario)
         badge = self._buildUpgradeBadge(latest.commander_level, overview.remaining_exp)
         if (
             not badge.text
@@ -498,6 +537,29 @@ class CommanderService:
             COMMANDER_BADGE_TONE_INFO,
         )
 
+    def getUpgradeScenario(self, remaining_exp: Optional[int]) -> str:
+        """
+        生成「若维持近期节奏」的升级情景文案（#23 §6.3）。
+
+        只在趋势明确（加速 / 放缓）时给出：近期节奏有偏，只作方向与情景参考，
+        不写成区间、不参与角标主值。升级天数主值仍由标题角标承载。
+
+        Args:
+            remaining_exp: 本级还差多少经验；None 或 <=0 时不输出情景。
+
+        Returns:
+            形如「若维持近期节奏 16.3 天后升级」；不适用时返回空串。
+        """
+        if not remaining_exp or remaining_exp <= 0:
+            return ""
+        efficiency = self.getExpEfficiency()
+        if efficiency.trend not in (TREND_ACCELERATING, TREND_DECELERATING):
+            return ""
+        fast = efficiency.fast_rate_per_day
+        if not fast or fast <= 0:
+            return ""
+        return f"若维持近期节奏 {remaining_exp / fast:.1f} 天后升级"
+
     # ----------------------------------------------------- 指级效率（#16）
 
     def getAbsoluteExp(self, level: int, current_exp: int) -> Optional[int]:
@@ -533,104 +595,305 @@ class CommanderService:
         窗口右端点取最新快照（不是今天），起点取窗口边界之前最近的一条快照；
         若全部历史都落在窗口内，则直接使用最早的一条（跨度会小于窗口）。
 
-        一次刷新会取卡片文本、卡片提示与升级预估共三次，缓存后只扫描一遍快照；
-        通过本服务写入快照时缓存失效。
+        同一次刷新里卡片文本、卡片提示、升级角标与升级情景都会调用本方法，
+        缓存后只扫描一遍快照；通过本服务写入快照时缓存失效；
+        ``stale_days`` 依赖当天日期，跨天后同样失效。
 
         Returns:
             计算结果；数据不足或异常时 `rate_per_day` 为 None 并给出 `degraded_reason`。
         """
-        if self._efficiency_cache is None:
+        today = time_source.today()
+        if self._efficiency_cache is None or self._efficiency_cache_date != today:
             self._efficiency_cache = self._computeExpEfficiency()
+            self._efficiency_cache_date = today
         return self._efficiency_cache
 
     def _invalidateEfficiencyCache(self) -> None:
         """快照发生写入后丢弃指级效率缓存。"""
         self._efficiency_cache = None
+        self._efficiency_cache_date = None
 
     def _computeExpEfficiency(self) -> ExpEfficiency:
         """
         实际计算指级效率（不做缓存）。
 
+        主值（slow）沿用 v1 公式；v2 在同一份 points 上追加近期节奏（fast）、
+        趋势（trend）、窗口内最大缺口（gap_days）与数据新鲜度（stale_days），
+        不新增 SQL、不改变主值语义。
+
         Returns:
             计算结果。
         """
-        points, skipped = self._collectAbsolutePoints()
+        points, skipped, invalid = self.collectAbsolutePoints()
 
         if not points:
+            if invalid:
+                reason = f"快照异常且没有可回退的有效记录（已隔离 {invalid} 条）"
+            else:
+                reason = "暂无快照，请先录入指挥官等级"
             return ExpEfficiency(
-                skipped=skipped,
-                degraded_reason="暂无快照，请先录入指挥官等级",
+                skipped=skipped, invalid_count=invalid, degraded_reason=reason
             )
         if len(points) < EXP_EFFICIENCY_MIN_SAMPLES:
+            suffix = f"；已隔离 {invalid} 条异常，疑似录入错误" if invalid else ""
             return ExpEfficiency(
                 sample_count=len(points),
                 skipped=skipped,
-                degraded_reason=f"至少需要两条可换算的快照（当前 {len(points)} 条）",
+                invalid_count=invalid,
+                degraded_reason=f"至少需要两条可换算的快照（当前 {len(points)} 条{suffix}）",
             )
 
         end_time, end_absolute = points[-1]
-        cutoff = end_time - timedelta(days=EXP_EFFICIENCY_WINDOW_DAYS)
-
-        start: Optional[Tuple[datetime, int]] = None
-        for moment, absolute in points:
-            if moment <= cutoff:
-                start = (moment, absolute)
-            else:
-                break
-
-        if start is None:
-            # 全部历史都在窗口内：用最早的一条，跨度自然小于窗口
-            start = points[0]
-
-        start_time, start_absolute = start
+        start_time, start_absolute = self._findWindowStart(points, end_time)
         span_days = (end_time - start_time).total_seconds() / 86400
+        stale_days = self._computeStaleDays(end_time)
+
         if span_days <= 0:
             return ExpEfficiency(
-                start_time=start_time.strftime(STATISTICS_DATETIME_FORMAT),
-                end_time=end_time.strftime(STATISTICS_DATETIME_FORMAT),
+                start_time=self._formatMoment(start_time),
+                end_time=self._formatMoment(end_time),
                 span_days=span_days,
                 sample_count=len(points),
                 skipped=skipped,
+                stale_days=stale_days,
+                invalid_count=invalid,
                 degraded_reason="区间跨度不足一天",
             )
 
         delta = end_absolute - start_absolute
         if delta < 0:
             return ExpEfficiency(
-                start_time=start_time.strftime(STATISTICS_DATETIME_FORMAT),
-                end_time=end_time.strftime(STATISTICS_DATETIME_FORMAT),
+                start_time=self._formatMoment(start_time),
+                end_time=self._formatMoment(end_time),
                 span_days=span_days,
                 sample_count=len(points),
                 skipped=skipped,
+                stale_days=stale_days,
+                invalid_count=invalid,
                 degraded_reason="最近快照的绝对经验低于区间起点，疑似录入错误",
             )
 
+        slow_rate = int(round(delta / span_days))
         sample_count = sum(1 for moment, _ in points if start_time <= moment <= end_time)
+        block = self._currentBlock(points)
+        fast_rate, fast_span = self._computeBlockRate(block)
+        trend, trend_ratio = self._classifyTrend(slow_rate, block, fast_rate, fast_span)
         return ExpEfficiency(
-            rate_per_day=int(round(delta / span_days)),
-            start_time=start_time.strftime(STATISTICS_DATETIME_FORMAT),
-            end_time=end_time.strftime(STATISTICS_DATETIME_FORMAT),
+            rate_per_day=slow_rate,
+            start_time=self._formatMoment(start_time),
+            end_time=self._formatMoment(end_time),
             span_days=span_days,
             sample_count=sample_count,
             cumulative_rate=self._buildCumulativeRate(points[0], points[-1]),
             skipped=skipped,
+            fast_rate_per_day=fast_rate,
+            fast_start_time=self._formatMoment(block[0][0]),
+            fast_end_time=self._formatMoment(block[-1][0]),
+            fast_span_days=fast_span,
+            fast_sample_count=len(block),
+            trend=trend,
+            trend_ratio=trend_ratio,
+            gap_days=self._computeMaxGap(points, start_time, end_time),
+            stale_days=stale_days,
+            invalid_count=invalid,
         )
 
-    def _collectAbsolutePoints(self) -> Tuple[List[Tuple[datetime, int]], int]:
+    @staticmethod
+    def _findWindowStart(
+        points: List[Tuple[datetime, int]], end_time: datetime
+    ) -> Tuple[datetime, int]:
         """
-        读取全部快照、换算绝对经验并按天去重。
+        取慢窗口起点：窗口边界之前最近的一条有效快照。
+
+        Args:
+            points: 按时间升序的有效快照点。
+            end_time: 右端点（最新有效快照）。
 
         Returns:
-            (按时间升序且同日去重的 (时刻, 绝对经验) 列表, 被跳过的快照条数)。
+            起点 (时刻, 绝对经验)；全部历史都在窗口内时返回最早一条。
+        """
+        cutoff = end_time - timedelta(days=EXP_EFFICIENCY_WINDOW_DAYS)
+        start: Optional[Tuple[datetime, int]] = None
+        for moment, absolute in points:
+            if moment <= cutoff:
+                start = (moment, absolute)
+            else:
+                break
+        return start if start is not None else points[0]
+
+    @staticmethod
+    def _currentBlock(points: List[Tuple[datetime, int]]) -> List[Tuple[datetime, int]]:
+        """
+        截取"近期连续记录块"：从最新点往回走，遇到超过 fast 缺口上限即停，
+        最多回看 fast 回看上限（两个阈值见 `utils.constants`）。
+
+        严格 cap：不为了凑够两条而回退到 14 天以外，宁可让 fast 为空。
+
+        Args:
+            points: 按时间升序的有效快照点（至少 2 条）。
+
+        Returns:
+            块内点（升序，至少包含最新一条）。
+        """
+        cap_cutoff = points[-1][0] - timedelta(days=EXP_EFFICIENCY_FAST_CAP_DAYS)
+        block: List[Tuple[datetime, int]] = [points[-1]]
+        for moment, absolute in reversed(points[:-1]):
+            if moment < cap_cutoff:
+                break
+            gap_days = (block[0][0] - moment).total_seconds() / 86400
+            if gap_days > EXP_EFFICIENCY_FAST_GAP_DAYS:
+                break
+            block.insert(0, (moment, absolute))
+        return block
+
+    @staticmethod
+    def _computeBlockRate(
+        block: List[Tuple[datetime, int]]
+    ) -> Tuple[Optional[int], Optional[float]]:
+        """
+        用端点差计算近期块日均，避免段速率被"记录频率"加权。
+
+        Args:
+            block: 近期连续块（升序）。
+
+        Returns:
+            (日均经验, 块跨度天数)；不足 2 条或跨度 <1 天时返回 (None, 跨度/None)。
+        """
+        if len(block) < 2:
+            return None, None
+        span_days = (block[-1][0] - block[0][0]).total_seconds() / 86400
+        if len(block) < EXP_EFFICIENCY_FAST_MIN_SAMPLES:
+            return None, span_days
+        if span_days < EXP_EFFICIENCY_FAST_MIN_SPAN_DAYS:
+            return None, span_days
+        delta = block[-1][1] - block[0][1]
+        return int(round(delta / span_days)), span_days
+
+    @staticmethod
+    def _classifyTrend(
+        slow_rate: int,
+        block: List[Tuple[datetime, int]],
+        fast_rate: Optional[int],
+        fast_span: Optional[float],
+    ) -> Tuple[Optional[str], Optional[float]]:
+        """
+        按 fast / slow 判定趋势档位。
+
+        Args:
+            slow_rate: 主值（30 天日均）。
+            block: 近期连续块。
+            fast_rate: 近期日均；None 表示样本不足。
+            fast_span: 近期块跨度。
+
+        Returns:
+            (trend 档位, fast/slow 比值)；未判定趋势时返回 (None, None)。
+        """
+        if fast_rate is None or fast_span is None or slow_rate <= 0:
+            return None, None
+        if (
+            len(block) < EXP_EFFICIENCY_TREND_MIN_SAMPLES
+            or fast_span < EXP_EFFICIENCY_TREND_MIN_SPAN_DAYS
+        ):
+            return None, None
+
+        ratio = fast_rate / slow_rate
+        if ratio >= EXP_EFFICIENCY_TREND_UP_RATIO:
+            return TREND_ACCELERATING, ratio
+        if ratio <= EXP_EFFICIENCY_TREND_DOWN_RATIO:
+            return TREND_DECELERATING, ratio
+        return TREND_STABLE, ratio
+
+    @staticmethod
+    def _computeMaxGap(
+        points: List[Tuple[datetime, int]], start_time: datetime, end_time: datetime
+    ) -> Optional[float]:
+        """
+        计算慢窗口内相邻有效快照的最大间隔。
+
+        Args:
+            points: 按时间升序的有效快照点。
+            start_time: 窗口起点。
+            end_time: 窗口终点。
+
+        Returns:
+            最大间隔（天）；窗口内不足两条时为 None。
+        """
+        window = [moment for moment, _ in points if start_time <= moment <= end_time]
+        if len(window) < 2:
+            return None
+        return max(
+            (window[index] - window[index - 1]).total_seconds() / 86400
+            for index in range(1, len(window))
+        )
+
+    @staticmethod
+    def _computeStaleDays(end_time: datetime) -> int:
+        """
+        计算数据新鲜度：最新有效快照距今天数（向下取整，最小 0）。
+
+        Args:
+            end_time: 最新有效快照时刻。
+
+        Returns:
+            距今天数。
+        """
+        seconds = (time_source.now() - end_time).total_seconds()
+        return max(0, int(seconds // 86400))
+
+    @staticmethod
+    def _formatMoment(moment: datetime) -> str:
+        """
+        把时刻格式化为数据库口径 ``yyyy-MM-dd HH:mm``。
+
+        Args:
+            moment: 时刻。
+
+        Returns:
+            格式化文本。
+        """
+        return moment.strftime(STATISTICS_DATETIME_FORMAT)
+
+    @staticmethod
+    def _formatTooltipMoment(value: Optional[str]) -> str:
+        """
+        把快照时刻格式化为 tooltip 口径：同年省略年份，跨年保留完整日期。
+
+        Args:
+            value: ``yyyy-MM-dd HH:mm`` 文本。
+
+        Returns:
+            ``MM-dd HH:mm`` 或完整日期；空值返回 ``-``。
+        """
+        if not value:
+            return "-"
+        moment = datetime.strptime(value, STATISTICS_DATETIME_FORMAT)
+        if moment.year == time_source.now().year:
+            return moment.strftime("%m-%d %H:%M")
+        return moment.strftime(STATISTICS_DATETIME_FORMAT)
+
+    def collectAbsolutePoints(self) -> Tuple[List[Tuple[datetime, int]], int, int]:
+        """
+        读取全部快照、逐条校验、换算绝对经验并按天去重。
+
+        校验顺序（#23 §4.1）：先判断能否换算（等级越界 / 基准缺失）→ 再判断
+        「可换算但异常」（经验为负、超过本级需求、绝对经验回退）→ 最后按天去重，
+        同一天只保留最后一条**有效**快照。校验逻辑与写入时的 ``_validateSnapshot``
+        一致，额外覆盖旧库、迁移数据与外部写库。
+
+        Returns:
+            (按时间升序且同日去重的 (时刻, 绝对经验) 列表,
+             无法换算条数, 异常隔离条数)。
         """
         points: List[Tuple[datetime, int]] = []
         skipped = 0
+        invalid = 0
+        last_absolute: Optional[int] = None
         try:
             snapshots = self._commander_repository.findAll()
         except DatabaseError as e:
             # 旧库 / 空库没有指挥官表：按"无快照"降级，不让整块看板报错
             if isMissingTableError(e) or isMissingColumnError(e):
-                return [], 0
+                return [], 0, 0
             raise
 
         for snapshot in reversed(snapshots):
@@ -638,14 +901,45 @@ class CommanderService:
             if absolute is None:
                 skipped += 1
                 continue
+            if self._isInvalidSnapshot(snapshot):
+                invalid += 1
+                continue
+            if last_absolute is not None and absolute < last_absolute:
+                # 绝对经验必须单调不减；回退多半是录入错误，隔离该条而不是整块降级
+                invalid += 1
+                continue
             moment = datetime.strptime(snapshot.statistics_date, STATISTICS_DATETIME_FORMAT)
             points.append((moment, absolute))
+            last_absolute = absolute
 
-        # 同一天只保留最后一条：最后一条的绝对经验已包含当天更早记录的全部增量
+        # 同一天只保留最后一条有效快照：它已包含当天更早记录的全部增量
         by_day: Dict[date, Tuple[datetime, int]] = {}
         for moment, absolute in points:
             by_day[moment.date()] = (moment, absolute)
-        return [by_day[day] for day in sorted(by_day)], skipped
+        return [by_day[day] for day in sorted(by_day)], skipped, invalid
+
+    def _isInvalidSnapshot(self, snapshot: CommanderSnapshotModel) -> bool:
+        """
+        判断一条可换算快照是否属于"可换算但异常"。
+
+        规则：本级经验为负，或超过本级升级需求（满级 200 无本级需求，不判越界）。
+
+        Args:
+            snapshot: 快照模型。
+
+        Returns:
+            是否异常。
+        """
+        level = snapshot.commander_level
+        exp = snapshot.commander_exp
+        if exp < 0:
+            return True
+        if level >= COMMANDER_LEVEL_MAX:
+            return False
+        requirement = self.getLevelRequirement(level)
+        if requirement is None or requirement.level_up_exp is None:
+            return False
+        return exp > requirement.level_up_exp
 
     @staticmethod
     def _buildCumulativeRate(
@@ -680,11 +974,14 @@ class CommanderService:
 
     def getExpEfficiencyTooltip(self) -> str:
         """
-        生成「指级效率」看板卡片悬停提示。
+        生成「指级效率」看板卡片悬停提示（#23 三段式）。
+
+        第 1 段慢窗口（主值 + 区间 + 样本数），第 2 段近期节奏与趋势，
+        第 3 段窗口内最大缺口 / 数据截止 / 累计日均与异常隔离说明。
+        缺数据时说明降级原因与口径。
 
         Returns:
-            正常时形如「近 30 天日均｜2026-09-16 18:42 → 2026-10-18 14:01（31.8 天，7 条快照）
-            ｜累计日均 9,522/天」；降级时说明原因与口径。
+            最多三行的提示文本。
         """
         efficiency = self.getExpEfficiency()
         window = f"近 {EXP_EFFICIENCY_WINDOW_DAYS} 天日均"
@@ -692,16 +989,113 @@ class CommanderService:
             reason = efficiency.degraded_reason or "数据不足"
             return f"指级效率：{reason}｜口径：{window}（绝对经验差 ÷ 实际跨度）"
 
-        parts = [
-            window,
-            f"{efficiency.start_time} → {efficiency.end_time}"
+        slow_parts = [
+            f"{window} {formatExact(efficiency.rate_per_day)}{EXP_EFFICIENCY_UNIT}",
+            f"{self._formatTooltipMoment(efficiency.start_time)} → "
+            f"{self._formatTooltipMoment(efficiency.end_time)}"
             f"（{efficiency.span_days:.1f} 天，{efficiency.sample_count} 条快照）",
         ]
         if efficiency.sample_count < 3:
-            parts.append("样本较少，仅供参考")
+            slow_parts.append("样本较少，仅供参考")
+
+        return "\n".join([
+            "｜".join(slow_parts),
+            self._buildFastTooltipPart(efficiency),
+            self._buildQualityTooltipPart(efficiency),
+        ])
+
+    def _buildFastTooltipPart(self, efficiency: ExpEfficiency) -> str:
+        """
+        生成 tooltip 第 2 段：近期节奏与趋势。
+
+        Args:
+            efficiency: 指级效率结果。
+
+        Returns:
+            单行提示；近期样本不足时说明原因。
+        """
+        if efficiency.fast_rate_per_day is None:
+            return "近期样本不足"
+
+        parts = [
+            f"近期节奏 {formatExact(efficiency.fast_rate_per_day)}{EXP_EFFICIENCY_UNIT}",
+            f"{self._formatTooltipMoment(efficiency.fast_start_time)} → "
+            f"{self._formatTooltipMoment(efficiency.fast_end_time)}"
+            f"（{efficiency.fast_span_days:.1f} 天，{efficiency.fast_sample_count} 条快照）",
+        ]
+        if efficiency.trend == TREND_ACCELERATING:
+            parts.append(f"趋势 加速 +{self._trendPercent(efficiency.trend_ratio)}%")
+        elif efficiency.trend == TREND_DECELERATING:
+            parts.append(f"趋势 放缓 {self._trendPercent(efficiency.trend_ratio)}%")
+        elif efficiency.trend is None:
+            parts.append("样本较少，暂不判断趋势")
+        # stable 不显示：趋势平稳时多一行文字只会稀释重点
+        return "｜".join(parts)
+
+    @staticmethod
+    def _trendPercent(ratio: Optional[float]) -> int:
+        """
+        把 fast/slow 比值换算成相对 30 天值的百分比变化（四舍五入取整）。
+
+        Args:
+            ratio: fast/slow 比值；None 视为 0。
+
+        Returns:
+            百分比整数，例如 1.32 → 32，0.82 → -18。
+        """
+        if ratio is None:
+            return 0
+        return int(round((ratio - 1) * 100))
+
+    def _buildQualityTooltipPart(self, efficiency: ExpEfficiency) -> str:
+        """
+        生成 tooltip 第 3 段：缺口、数据新鲜度、累计对照与异常隔离。
+
+        Args:
+            efficiency: 指级效率结果。
+
+        Returns:
+            单行提示。
+        """
+        parts = []
+        if (
+            efficiency.gap_days is not None
+            and efficiency.gap_days >= EXP_EFFICIENCY_GAP_HINT_DAYS
+        ):
+            parts.append(f"窗口内最大缺口 {efficiency.gap_days:.1f} 天")
+        parts.append(f"数据截止 {self._formatTooltipMoment(efficiency.end_time)}")
+        if (
+            efficiency.stale_days is not None
+            and efficiency.stale_days >= EXP_EFFICIENCY_STALE_DAYS
+        ):
+            parts.append(f"数据已 {efficiency.stale_days} 天未更新")
         if efficiency.cumulative_rate is not None:
             parts.append(f"累计日均 {formatExact(efficiency.cumulative_rate)}{EXP_EFFICIENCY_UNIT}")
+        if efficiency.invalid_count:
+            if self._latestSnapshotIsolated(efficiency):
+                parts.append("最新快照异常，已按上一条计算")
+            else:
+                parts.append(f"已隔离 {efficiency.invalid_count} 条异常快照")
         return "｜".join(parts)
+
+    def _latestSnapshotIsolated(self, efficiency: ExpEfficiency) -> bool:
+        """
+        判断被隔离的异常里是否包含"最新一条"快照。
+
+        Args:
+            efficiency: 指级效率结果。
+
+        Returns:
+            最新快照是否晚于已采用的右端点。
+        """
+        if not efficiency.invalid_count or not efficiency.end_time:
+            return False
+        latest = self.getLatestSnapshot()
+        if latest is None:
+            return False
+        latest_moment = datetime.strptime(latest.statistics_date, STATISTICS_DATETIME_FORMAT)
+        end_moment = datetime.strptime(efficiency.end_time, STATISTICS_DATETIME_FORMAT)
+        return latest_moment > end_moment
 
     def _normalize(self, snapshot: CommanderSnapshotModel) -> CommanderSnapshotModel:
         """
