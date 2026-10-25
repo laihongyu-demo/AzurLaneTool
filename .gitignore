@@ -9,6 +9,12 @@ __pycache__/
 *.sqlite
 *.sqlite3
 
+# 本地用户数据（每台机器独立，不入库）
+data/user.json
+
+# 本地活动统计源文件（已导入数据库，不入库；需要时用导入脚本 --csv 指定）
+/event.csv
+
 # IDE 配置
 .vscode/
 .idea/
@@ -25,6 +31,8 @@ __pycache__/
 build/
 dist/
 *.spec
+# build.spec 是项目构建配置，必须跟踪；上面的 *.spec 只忽略临时/生成的 spec
+!build.spec
 
 # 测试覆盖率
 .coverage
@@ -35,3 +43,7 @@ htmlcov/
 venv/
 env/
 .venv/
+
+# DSH 插件开发目录（Harness 插件源码，本机开发用，不属于本项目）
+dsh-plugins/
+.dsh/

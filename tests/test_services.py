@@ -3,10 +3,12 @@
 """
 
 import unittest
-from datetime import date
+from datetime import date, timedelta
 
 from models.ship_model import ShipModel
+from models.user_model import UserModel
 from services.calc_service import CalcService
+from services.user_service import UserService
 
 
 class TestCalcService(unittest.TestCase):
@@ -58,6 +60,44 @@ class TestCalcService(unittest.TestCase):
         result = self._calc_service.calculateCapacityDistribution(ships, bins=3)
         self.assertIsInstance(result, dict)
         self.assertEqual(sum(result.values()), 3)
+
+
+class _StubUserRepository:
+    """用户数据访问桩：返回指定起始日期的用户。"""
+
+    def __init__(self, start_date: str = ""):
+        self._user = (
+            UserModel(username="tester", start_date=start_date)
+            if start_date else None
+        )
+
+    def loadUser(self):
+        """返回预设用户模型。"""
+        return self._user
+
+
+class TestUserService(unittest.TestCase):
+    """用户服务测试类。"""
+
+    def _serviceWithDaysAgo(self, days_ago: int) -> UserService:
+        """构造一个起始日期在 days_ago 天前的用户服务。"""
+        start = date.today() - timedelta(days=days_ago)
+        return UserService(_StubUserRepository(start.strftime("%Y-%m-%d")))
+
+    def testDutyDaysTextUsesThousandSeparator(self):
+        """执勤天数为精确数值，过千时固定加千分符。"""
+        service = self._serviceWithDaysAgo(1169)
+
+        self.assertEqual(service.getDutyDays(), 1169)
+        self.assertEqual(service.getDutyDaysText(), '1,169天')
+
+    def testDutyDaysTextBelowThousand(self):
+        """千位以下不加分隔符。"""
+        self.assertEqual(self._serviceWithDaysAgo(999).getDutyDaysText(), '999天')
+
+    def testDutyDaysTextWithoutUser(self):
+        """无用户数据时执勤天数为 0。"""
+        self.assertEqual(UserService(_StubUserRepository()).getDutyDaysText(), '0天')
 
 
 if __name__ == "__main__":
