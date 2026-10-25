@@ -48,14 +48,20 @@ class CubeTaskCompletionModel(BaseModel):
     """
     任务完成记录模型。
 
-    对应 ``cube_task_completion`` 表；一条记录对应一笔魔方收入明细。
+    对应 ``cube_task_completion`` 表；一条记录对应一笔收入明细。
+    建造任务（``daily_build_once``）还会挂第二笔支出明细与关联活动：
+
+    - ``expense_transaction_id`` 指向建造支出；使用建造券时为空（不扣魔方）；
+    - ``event_id`` 记录本次建造关联 / 计入券抽次数的活动，取消时据此回滚。
 
     Attributes:
         id: 记录 ID。
         task_code: 任务编码。
         period_key: 周期键（``2026-10-17`` / ``2026-W42`` / ``2026-10``）。
         completed_at: 完成时刻，格式 ``yyyy-MM-dd HH:mm:ss``。
-        transaction_id: 关联的 ``resource_transaction.id``；``None`` 表示仅标记、无对应明细。
+        transaction_id: 关联的收入 ``resource_transaction.id``；``None`` 表示仅标记、无对应明细。
+        expense_transaction_id: 关联的支出明细 ID；``None`` 表示本次没有支出（如使用建造券）。
+        event_id: 关联 / 计入券抽次数的活动记录 ID；``None`` 表示没有进行中活动。
         created_at: 记录创建时间。
     """
 
@@ -64,4 +70,6 @@ class CubeTaskCompletionModel(BaseModel):
     period_key: str = ""
     completed_at: str = ""
     transaction_id: Optional[int] = None
+    expense_transaction_id: Optional[int] = None
+    event_id: Optional[int] = None
     created_at: Optional[str] = None

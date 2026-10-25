@@ -38,6 +38,7 @@ def ensureResourceStatisticsSchema(db_path: Optional[str] = None) -> None:
     - 活动记录的 ``draws``（抽数）重命名为 ``build_count``（建造次数）
     - 活动记录补齐 ``build_cost`` / ``use_ticket`` / ``ticket_build_count``（单耗与券抽）
     - 任务定义补齐 ``short_name`` / ``resource_type``
+    - 任务完成记录补齐 ``expense_transaction_id`` / ``event_id``（建造任务的两笔联动）
     - 类型字典补齐 ``is_active``（1 启用 / 0 停用）
     - 重建明细上的时间索引
 
@@ -121,10 +122,12 @@ def _upgradeLegacySchema(conn: sqlite3.Connection) -> None:
 
 def _upgradeCubeTaskSchema(conn: sqlite3.Connection) -> None:
     """
-    为早期的 ``cube_task`` 补 ``short_name`` 与 ``resource_type`` 列。
+    为早期的 ``cube_task`` 补 ``short_name`` / ``resource_type`` 列，
+    并为 ``cube_task_completion`` 补建造任务联动列。
 
-    新库由 SQL 脚本直接建出这两列，这里只处理已存在但缺列的老库；可重复执行。
-    老库的现有任务默认归到 ``cube``，红尖尖任务由后续 SQL 脚本幂等写入。
+    新库由 SQL 脚本直接建出这些列，这里只处理已存在但缺列的老库；可重复执行。
+    老库的现有任务默认归到 ``cube``，红尖尖任务由后续 SQL 脚本幂等写入；
+    历史完成记录没有建造联动，两列为空即表示「没有支出 / 没有关联活动」。
 
     Args:
         conn: 数据库连接。
@@ -136,6 +139,14 @@ def _upgradeCubeTaskSchema(conn: sqlite3.Connection) -> None:
         conn.execute(
             "ALTER TABLE cube_task ADD COLUMN resource_type TEXT NOT NULL DEFAULT 'cube'"
         )
+
+    completion_columns = _tableColumns(conn, "cube_task_completion")
+    if completion_columns and "expense_transaction_id" not in completion_columns:
+        conn.execute(
+            "ALTER TABLE cube_task_completion ADD COLUMN expense_transaction_id INTEGER"
+        )
+    if completion_columns and "event_id" not in completion_columns:
+        conn.execute("ALTER TABLE cube_task_completion ADD COLUMN event_id INTEGER")
 
 
 def _upgradeEventTransactionColumn(conn: sqlite3.Connection) -> None:

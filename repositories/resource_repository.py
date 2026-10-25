@@ -47,6 +47,25 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
         except Exception:
             return False
 
+    def _completionColumnExists(self, column: str) -> bool:
+        """
+        判断任务完成记录表是否已有某列（用于旧库降级）。
+
+        升级脚本未执行时，``expense_transaction_id`` 等新列可能缺失；此时相关查询应
+        退回旧口径，而不是把 ``no such column`` 抛到界面。
+
+        Args:
+            column: 列名。
+
+        Returns:
+            列存在返回 True；表不存在或查询失败返回 False。
+        """
+        try:
+            rows = DatabaseConnection.executeQuery("PRAGMA table_info(cube_task_completion)")
+            return any(row["name"] == column for row in rows)
+        except Exception:
+            return False
+
     def findAll(self) -> List[ResourceDailyModel]:
         """
         查询全部日汇总行。
@@ -291,9 +310,10 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
         """
         查询最近一笔「非任务来源」的明细（供常规录入撤销使用）。
 
-        任务看板写入的明细会在 ``cube_task_completion.transaction_id`` 留下引用，
-        贸易许可证续约写入的 500 红尖尖会在 ``trade_license_purchase.transaction_id``
-        留下引用；这里用反连接把它们排除，避免撤销误伤固定来源。
+        任务看板写入的明细会在 ``cube_task_completion.transaction_id``（收入）或
+        ``expense_transaction_id``（建造支出）留下引用，贸易许可证续约写入的 500 红尖尖
+        会在 ``trade_license_purchase.transaction_id`` 留下引用；这里用反连接把它们排除，
+        避免撤销误伤固定来源。
 
         Args:
             resource_type: 资源类型。
@@ -310,13 +330,19 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
             if has_trade_license else ""
         )
         trade_condition = "AND tl.id IS NULL" if has_trade_license else ""
+        # 旧库可能还没补 expense_transaction_id：此时退回只排除收入明细，行为与升级前一致
+        task_refs = "c.transaction_id = t.id"
+        if self._completionColumnExists("expense_transaction_id"):
+            task_refs += " OR c.expense_transaction_id = t.id"
         sql = f"""
             SELECT t.id, t.resource_type, t.direction, t.record_time, t.category,
                    t.amount, t.note, t.event_id, t.created_at, t.updated_at
             FROM {self.TRANSACTION_TABLE} t
-            LEFT JOIN cube_task_completion c ON c.transaction_id = t.id
             {trade_join}
-            WHERE t.resource_type = ? AND c.id IS NULL {trade_condition}
+            WHERE t.resource_type = ? {trade_condition}
+              AND NOT EXISTS (
+                  SELECT 1 FROM cube_task_completion c WHERE {task_refs}
+              )
             ORDER BY t.record_time DESC, t.id DESC
             LIMIT 1
         """
@@ -686,6 +712,36 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
             return None
         except Exception as e:
             raise DatabaseError(f"查询资源明细失败: {e}")
+
+    def findTransactionsByIds(self, record_ids: List[int]) -> List[ResourceTransactionModel]:
+        """
+        按 ID 批量查询明细（供任务看板展示建造支出等联动记录）。
+
+        Args:
+            record_ids: 明细 ID 列表。
+
+        Returns:
+            明细模型列表；入参为空时返回空列表。
+
+        Raises:
+            DatabaseError: 当查询失败时抛出。
+        """
+        ids = [int(value) for value in record_ids if value is not None]
+        if not ids:
+            return []
+
+        placeholders = ", ".join("?" for _ in ids)
+        sql = f"""
+            SELECT id, resource_type, direction, record_time, category, amount,
+                   note, event_id, created_at, updated_at
+            FROM {self.TRANSACTION_TABLE}
+            WHERE id IN ({placeholders})
+        """
+        try:
+            results = DatabaseConnection.executeQuery(sql, tuple(ids))
+            return [ResourceTransactionModel.fromDict(row) for row in results]
+        except Exception as e:
+            raise DatabaseError(f"批量查询资源明细失败: {e}")
 
     def findExistingTransactionIds(self, record_ids: List[int]) -> Set[int]:
         """

@@ -391,6 +391,12 @@ class EventRecordPanel(QWidget):
             return "手工 / 历史建造次数（该活动没有关联明细）"
 
         record = view.record
+        if not view.transaction_count:
+            return (
+                f"该活动没有关联魔方明细：手工值 {record.build_count or 0}"
+                f" + 建造券 {view.ticket_build_count} 次"
+            )
+
         text = (
             f"由关联明细自动计算：{formatExact(view.cube_expense)} 魔方 ÷ "
             f"{record.build_cost} 魔方/次 = {view.cube_build_count} 次"

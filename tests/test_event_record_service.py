@@ -446,13 +446,26 @@ class TestEventLink(_TempEventDatabaseCase):
         self.assertEqual(view.build_count, 15)
 
     def testNoLinkedUsesManualBuildCount(self):
-        """无关联明细时继续使用手工 / 历史建造次数。"""
+        """无关联明细且无券抽时继续使用手工 / 历史建造次数。"""
         record = self._create(days_ago=1, build_count=30)
         view = self._service.listRecords()[0]
 
         self.assertFalse(view.derived)
         self.assertEqual(view.build_count, 30)
         self.assertEqual(view.cube_build_count, 0)
+
+    def testTicketOnlyBuildsCountedWithoutLinkedDetails(self):
+        """没有关联魔方明细但有券抽（任务看板用建造券完成日常建造）时，券抽也计入。"""
+        record = self._create(
+            days_ago=1, build_count=30, use_ticket=1, ticket_build_count=2
+        )
+
+        view = self._service.listRecords()[0]
+
+        self.assertTrue(view.derived)
+        self.assertEqual(view.transaction_count, 0)
+        self.assertEqual(view.ticket_build_count, 2)
+        self.assertEqual(view.build_count, 32)
 
     def testRemainderFlagged(self):
         """关联魔方除不尽单耗时给出余数，便于核对。"""
