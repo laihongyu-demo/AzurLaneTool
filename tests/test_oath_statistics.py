@@ -57,7 +57,8 @@ class TestOathStatisticsRepository(unittest.TestCase):
                 ship_liking TEXT,
                 oath_status TEXT,
                 codex_unlock TEXT,
-                date_edit TEXT
+                date_edit TEXT,
+                fleet_position TEXT
             )
         """)
 
@@ -161,7 +162,8 @@ class TestOathStatisticsEmptyDatabase(unittest.TestCase):
                 ship_liking TEXT,
                 oath_status TEXT,
                 codex_unlock TEXT,
-                date_edit TEXT
+                date_edit TEXT,
+                fleet_position TEXT
             )
         """)
         conn.commit()
@@ -211,7 +213,8 @@ class TestOathStatisticsAllExcluded(unittest.TestCase):
                 ship_liking TEXT,
                 oath_status TEXT,
                 codex_unlock TEXT,
-                date_edit TEXT
+                date_edit TEXT,
+                fleet_position TEXT
             )
         """)
 
@@ -276,7 +279,8 @@ class TestOathStatisticsService(unittest.TestCase):
                 ship_liking TEXT,
                 oath_status TEXT,
                 codex_unlock TEXT,
-                date_edit TEXT
+                date_edit TEXT,
+                fleet_position TEXT
             )
         """)
 
@@ -366,7 +370,8 @@ class TestOathStatisticsEdgeCases(unittest.TestCase):
                 ship_liking TEXT,
                 oath_status TEXT,
                 codex_unlock TEXT,
-                date_edit TEXT
+                date_edit TEXT,
+                fleet_position TEXT
             )
         """)
 

@@ -247,6 +247,11 @@ class CodexShipCreateService:
         ship_typ = str(draft.ship_typ or "").strip()
         if not ship_typ:
             raise ValidationError("舰船类型不能为空")
+        if ship_typ not in options.SHIP_TYPS:
+            raise ValidationError(f"未知的舰船类型: {ship_typ}")
+
+        # 舰队位置由舰种派生，不接受手工填写，避免与舰种口径漂移
+        fleet_position = options.getFleetPosition(ship_typ)
 
         ship_rarity = str(draft.ship_rarity or "").strip()
         if ship_rarity not in options.SHIP_RARITIES:
@@ -278,6 +283,7 @@ class CodexShipCreateService:
             "ship_name": ship_name,
             "ship_group": ship_group,
             "ship_typ": ship_typ,
+            "fleet_position": fleet_position,
             "ship_rarity": ship_rarity,
             "ship_star": ship_star,
             "ship_camp": ship_camp,
@@ -326,7 +332,8 @@ class CodexShipCreateService:
             ship_liking=normalized["ship_liking"],
             oath_status=normalized["oath_status"],
             codex_unlock="N",
-            date_edit=normalized["date_edit"]
+            date_edit=normalized["date_edit"],
+            fleet_position=normalized["fleet_position"]
         )
 
         try:
@@ -395,7 +402,8 @@ class CodexShipCreateService:
         lines.append(f"-- 新增图鉴_{normalized['ship_group']}")
         lines.append(
             "INSERT INTO codex_group (codex_id, ship_name, ship_level, ship_star, ship_rarity, "
-            "ship_typ, ship_group, ship_aid, ship_camp, ship_liking, oath_status, codex_unlock, date_edit)"
+            "ship_typ, ship_group, ship_aid, ship_camp, ship_liking, oath_status, codex_unlock, "
+            "date_edit, fleet_position)"
         )
         lines.append("VALUES")
         lines.append("(" + ", ".join([
@@ -411,7 +419,8 @@ class CodexShipCreateService:
             _sqlQuote(normalized["ship_liking"]),
             _sqlQuote(normalized["oath_status"]),
             _sqlQuote("N"),
-            _sqlQuote(normalized["date_edit"])
+            _sqlQuote(normalized["date_edit"]),
+            _sqlQuote(normalized["fleet_position"])
         ]) + ");")
 
         if normalized["tp_rows"]:

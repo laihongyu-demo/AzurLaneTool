@@ -51,6 +51,41 @@ SHIP_TYPS: List[str] = [
     "风帆S", "风帆M", "风帆V",
 ]
 
+# 舰队位置（前排先锋 / 后排主力 / 水下舰队）
+# 取值与游戏内舰队编成一致：先锋舰队、主力舰队、潜艇舰队
+FLEET_POSITION_VANGUARD: str = "前排先锋"
+FLEET_POSITION_MAIN: str = "后排主力"
+FLEET_POSITION_SUBMARINE: str = "水下舰队"
+
+FLEET_POSITIONS: List[str] = [
+    FLEET_POSITION_VANGUARD, FLEET_POSITION_MAIN, FLEET_POSITION_SUBMARINE,
+]
+
+# 舰船类型 → 舰队位置（唯一口径来源：迁移回填、新增舰娘派生共用）
+#   前排先锋：驱逐 / 轻巡 / 重巡 / 超巡 / 运输（占先锋位）/ 风帆V（V = Vanguard）
+#   后排主力：战列 / 战巡 / 航战 / 正航 / 轻母 / 浅水重炮舰 / 维修 / 风帆M（M = Main）
+#   水下舰队：潜艇 / 潜水空母 / 风帆S（S = Submarine，占潜艇位）
+# 游戏新增舰种时，除 :data:`SHIP_TYPS` 外必须在此登记位置，否则新增校验会报错。
+SHIP_TYP_FLEET_POSITION: Dict[str, str] = {
+    "驱逐舰": FLEET_POSITION_VANGUARD,
+    "轻型巡洋舰": FLEET_POSITION_VANGUARD,
+    "重型巡洋舰": FLEET_POSITION_VANGUARD,
+    "超级巡洋舰": FLEET_POSITION_VANGUARD,
+    "弹药运输舰": FLEET_POSITION_VANGUARD,
+    "风帆V": FLEET_POSITION_VANGUARD,
+    "战列舰": FLEET_POSITION_MAIN,
+    "战列巡洋舰": FLEET_POSITION_MAIN,
+    "航空战列舰": FLEET_POSITION_MAIN,
+    "航空母舰": FLEET_POSITION_MAIN,
+    "轻型航空母舰": FLEET_POSITION_MAIN,
+    "浅水重炮舰": FLEET_POSITION_MAIN,
+    "维修舰": FLEET_POSITION_MAIN,
+    "风帆M": FLEET_POSITION_MAIN,
+    "潜艇": FLEET_POSITION_SUBMARINE,
+    "潜水空母": FLEET_POSITION_SUBMARINE,
+    "风帆S": FLEET_POSITION_SUBMARINE,
+}
+
 # 阵营
 SHIP_CAMPS: List[str] = [
     "白鹰联邦", "皇家海军", "重樱群岛", "铁血公国", "北方联合",
@@ -276,6 +311,27 @@ def isNoTpBuffGroup(ship_group: str) -> bool:
         无需写入 codex_tp / codex_buff 时返回 True。
     """
     return ship_group in NO_TP_BUFF_GROUPS
+
+
+def getFleetPosition(ship_typ: str) -> Optional[str]:
+    """
+    获取舰船类型对应的舰队位置。
+
+    Args:
+        ship_typ: 舰船类型（如 ``驱逐舰``、``风帆S``）。
+
+    Returns:
+        ``前排先锋`` / ``后排主力`` / ``水下舰队``；未登记的类型返回 ``None``。
+
+    Examples:
+        >>> getFleetPosition("驱逐舰")
+        '前排先锋'
+        >>> getFleetPosition("风帆S")
+        '水下舰队'
+        >>> getFleetPosition("未知舰种") is None
+        True
+    """
+    return SHIP_TYP_FLEET_POSITION.get(str(ship_typ or "").strip())
 
 
 def getDefaultStar(ship_group: str, ship_rarity: str) -> int:

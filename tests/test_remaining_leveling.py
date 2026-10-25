@@ -39,7 +39,8 @@ CREATE_GROUP_SQL = """
         ship_liking TEXT DEFAULT '陌生',
         oath_status TEXT DEFAULT 'N',
         codex_unlock TEXT DEFAULT 'N',
-        date_edit NUMERIC
+        date_edit NUMERIC,
+        fleet_position TEXT
     )
 """
 

@@ -34,7 +34,8 @@ CREATE_SQL = [
         ship_liking TEXT DEFAULT '陌生',
         oath_status TEXT DEFAULT 'N',
         codex_unlock TEXT DEFAULT 'N',
-        date_edit DATE
+        date_edit DATE,
+        fleet_position TEXT
     )
     """,
     """

@@ -1,7 +1,7 @@
 """
 舰娘新增对话框模块。
 
-定义新增舰娘的录入窗口：基础信息、科技点（固定三档）、科技属性（原始数据文本），
+定义新增舰娘的录入窗口：基础信息、科技点（固定三档）、科技属性（原始数据文本，每档单行），
 支持按分组自动生成图鉴ID、SQL预览，并在确认后通过服务层以单事务写入三张表。
 """
 
@@ -9,7 +9,7 @@ from typing import Dict, List, Optional
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit, QPushButton,
-    QComboBox, QSpinBox, QTimeEdit, QGroupBox, QPlainTextEdit,
+    QComboBox, QSpinBox, QTimeEdit, QGroupBox,
     QMessageBox, QTextEdit
 )
 from PyQt5.QtCore import QDate, QDateTime, QTime, pyqtSignal
@@ -46,7 +46,7 @@ class CodexShipCreateDialog(QDialog):
         super().__init__(parent)
         self._create_service = create_service or CodexShipCreateService()
         self._tpEdits: Dict[str, QLineEdit] = {}
-        self._buffEdits: Dict[str, QPlainTextEdit] = {}
+        self._buffEdits: Dict[str, QLineEdit] = {}
         self._initUi()
         self._connectSignals()
         self._applyGroupDefaults()
@@ -54,7 +54,8 @@ class CodexShipCreateDialog(QDialog):
     def _initUi(self) -> None:
         """初始化用户界面。"""
         self.setWindowTitle("新增舰娘")
-        self.setMinimumSize(820, 640)
+        # 科技属性改为单行输入后，内容所需高度约 565px，比原先（两个多行框各 88px）矮约 126px
+        self.setMinimumSize(820, 570)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
@@ -209,7 +210,7 @@ class CodexShipCreateDialog(QDialog):
     # ---------- 科技属性 ----------
 
     def _createBuffGroup(self) -> QGroupBox:
-        """创建科技属性区域（原始数据文本录入）。"""
+        """创建科技属性区域（原始数据文本录入，单行）。"""
         group = QGroupBox("科技属性 codex_buff")
         self._buffGroup = group
         grid = QGridLayout(group)
@@ -217,10 +218,12 @@ class CodexShipCreateDialog(QDialog):
         grid.setVerticalSpacing(8)
 
         for row, buff_cond in enumerate(options.BUFF_CONDS):
-            edit = QPlainTextEdit()
-            edit.setPlaceholderText(f"{options.BUFF_TEXT_EXAMPLE}    （每行一条，行内多个增益类型用 / 分隔）")
-            edit.setMinimumHeight(88)
-            edit.setTabChangesFocus(True)
+            # 单个解锁条件在游戏数据里固定只有一条增益（如「战巡/战列/航战 耐久+1」），
+            # 因此用单行输入；解析层仍兼容多行文本，供脚本/历史数据使用。
+            edit = QLineEdit()
+            edit.setPlaceholderText(
+                f"{options.BUFF_TEXT_EXAMPLE}    （多个增益类型用 / 分隔）"
+            )
             self._buffEdits[buff_cond] = edit
 
             grid.addWidget(QLabel(f"{buff_cond}:"), row, 0)
@@ -386,7 +389,7 @@ class CodexShipCreateDialog(QDialog):
 
     def _collectBuffText(self) -> Dict[str, str]:
         """采集科技属性原始数据文本。"""
-        return {cond: edit.toPlainText() for cond, edit in self._buffEdits.items()}
+        return {cond: edit.text() for cond, edit in self._buffEdits.items()}
 
     def _collectTpRows(self) -> List[Dict]:
         """按当前输入估算科技点行数（仅用于界面提示）。"""

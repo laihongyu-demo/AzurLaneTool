@@ -29,7 +29,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         sql = f"""
             SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
                    ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
-                   oath_status, codex_unlock, date_edit
+                   oath_status, codex_unlock, date_edit, fleet_position
             FROM {self.TABLE_NAME}
             ORDER BY codex_id
         """
@@ -45,7 +45,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         sql = f"""
             SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
                    ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
-                   oath_status, codex_unlock, date_edit
+                   oath_status, codex_unlock, date_edit, fleet_position
             FROM {self.TABLE_NAME}
             WHERE codex_id = ?
         """
@@ -118,7 +118,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         sql = f"""
             SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
                    ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
-                   oath_status, codex_unlock, date_edit
+                   oath_status, codex_unlock, date_edit, fleet_position
             FROM {self.TABLE_NAME}
             WHERE ship_name = ?
         """
@@ -140,7 +140,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         sql = f"""
             SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
                    ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
-                   oath_status, codex_unlock, date_edit
+                   oath_status, codex_unlock, date_edit, fleet_position
             FROM {self.TABLE_NAME}
             WHERE codex_unlock = 'Y'
             ORDER BY codex_id
@@ -157,7 +157,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         sql = f"""
             SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
                    ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
-                   oath_status, codex_unlock, date_edit
+                   oath_status, codex_unlock, date_edit, fleet_position
             FROM {self.TABLE_NAME}
             WHERE codex_unlock = 'N'
             ORDER BY ship_aid DESC, codex_id DESC
@@ -183,14 +183,14 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         sql = f"""
             INSERT INTO {self.TABLE_NAME} (codex_id, ship_name, ship_level, ship_star,
                    ship_rarity, ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
-                   oath_status, codex_unlock, date_edit)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   oath_status, codex_unlock, date_edit, fleet_position)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (
             record.codex_id, record.ship_name, record.ship_level, record.ship_star,
             record.ship_rarity, record.ship_typ, record.ship_group, record.ship_aid,
             record.ship_camp, record.ship_liking, record.oath_status,
-            record.codex_unlock, record.date_edit
+            record.codex_unlock, record.date_edit, record.fleet_position
         )
         try:
             if conn is not None:
@@ -208,14 +208,15 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
             UPDATE {self.TABLE_NAME}
             SET ship_name = ?, ship_level = ?, ship_star = ?, ship_rarity = ?,
                 ship_typ = ?, ship_group = ?, ship_aid = ?, ship_camp = ?,
-                ship_liking = ?, oath_status = ?, codex_unlock = ?, date_edit = ?
+                ship_liking = ?, oath_status = ?, codex_unlock = ?, date_edit = ?,
+                fleet_position = ?
             WHERE codex_id = ?
         """
         params = (
             record.ship_name, record.ship_level, record.ship_star, record.ship_rarity,
             record.ship_typ, record.ship_group, record.ship_aid, record.ship_camp,
             record.ship_liking, record.oath_status, record.codex_unlock,
-            record.date_edit, record.codex_id
+            record.date_edit, record.fleet_position, record.codex_id
         )
         try:
             with self._getConnection() as conn:
@@ -258,7 +259,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         sql = f"""
             SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
                    ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
-                   oath_status, codex_unlock, date_edit
+                   oath_status, codex_unlock, date_edit, fleet_position
             FROM {self.TABLE_NAME}
             WHERE codex_unlock = 'Y' AND ship_group != '联动'
             ORDER BY codex_id
@@ -275,7 +276,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         sql = f"""
             SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
                    ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
-                   oath_status, codex_unlock, date_edit
+                   oath_status, codex_unlock, date_edit, fleet_position
             FROM {self.TABLE_NAME}
             WHERE codex_unlock = 'N' AND ship_group != '联动'
             ORDER BY codex_id
@@ -292,7 +293,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         sql = f"""
             SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
                    ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
-                   oath_status, codex_unlock, date_edit
+                   oath_status, codex_unlock, date_edit, fleet_position
             FROM {self.TABLE_NAME}
             WHERE ship_group != '联动'
             ORDER BY codex_id
@@ -484,7 +485,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         sql = f"""
             SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
                    ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
-                   oath_status, codex_unlock, date_edit
+                   oath_status, codex_unlock, date_edit, fleet_position
             FROM {self.TABLE_NAME}
             WHERE codex_unlock = 'Y' AND ship_level != '认知觉醒II' AND ship_group != '改造'
             ORDER BY ship_aid DESC, codex_id DESC
@@ -530,7 +531,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         sql = f"""
             SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
                    ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
-                   oath_status, codex_unlock, date_edit
+                   oath_status, codex_unlock, date_edit, fleet_position
             FROM {self.TABLE_NAME}
             WHERE ship_star < {options.buildMappingCaseSql(
                 'ship_rarity', options.RARITY_MAX_STAR, options.DEFAULT_MAX_STAR)}
@@ -580,7 +581,7 @@ class CodexGroupRepository(BaseRepository[CodexGroupModel]):
         sql = f"""
             SELECT codex_id, ship_name, ship_level, ship_star, ship_rarity,
                    ship_typ, ship_group, ship_aid, ship_camp, ship_liking,
-                   oath_status, codex_unlock, date_edit
+                   oath_status, codex_unlock, date_edit, fleet_position
             FROM {self.TABLE_NAME}
             WHERE oath_status = 'N' AND codex_unlock = 'Y' AND ship_group != '改造'
             ORDER BY ship_aid DESC, codex_id DESC

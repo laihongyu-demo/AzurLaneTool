@@ -2,13 +2,16 @@
 数据库表结构引导模块。
 
 负责在应用启动时确保资源统计 / 任务看板 / 贸易许可证相关表存在（幂等 DDL），
-并把早期版本的表结构就地升级到当前口径（明细精确到秒），同时提供"表 / 列不存在"
+把早期版本的表结构就地升级到当前口径（明细精确到秒），并为历史图鉴表
+``codex_group`` 补齐舰队位置列并按舰种回填，同时提供"表 / 列不存在"
 异常的识别辅助。
 """
 
 import sqlite3
-from typing import Optional, Set
+from contextlib import contextmanager
+from typing import Iterator, Optional, Set
 
+from utils import codex_options
 from utils.db_connection import DatabaseConnection, DatabaseContext
 from utils.sql_loader import loadSqlFile
 
@@ -17,6 +20,11 @@ CUBE_TASK_SCHEMA_FILE = "CreateCubeTaskTables.sql"
 TRADE_LICENSE_SCHEMA_FILE = "CreateTradeLicenseTable.sql"
 EVENT_SCHEMA_FILE = "CreateEventRecordTable.sql"
 CATEGORY_SEED_FILE = "SeedResourceCategories.sql"
+
+# 历史图鉴表：由图鉴导入维护，应用只做「按需补列 + 回填」，不建表
+CODEX_GROUP_TABLE = "codex_group"
+# 该触发器会在 codex_group 任意 UPDATE 后把 date_edit 改为当前时间
+CODEX_GROUP_MODTIME_TRIGGER = "update_codex_group_modtime"
 
 # 仅日期（yyyy-MM-dd）的写法长度；用于识别需要补时分秒的旧值
 LEGACY_DATE_LENGTH = 10
@@ -74,6 +82,83 @@ def ensureResourceStatisticsSchema(db_path: Optional[str] = None) -> None:
         # 类型字典仅在为空时播种；已有数据时不再改写顺序/名称/停用状态
         _seedCategoriesIfEmpty(conn, category_sql)
         _backfillLastRecordTime(conn)
+
+
+def ensureCodexGroupSchema(db_path: Optional[str] = None) -> None:
+    """
+    确保 ``codex_group`` 具备 ``fleet_position``（舰队位置）列，并按舰种回填。
+
+    ``codex_group`` 是历史图鉴表，应用不负责建表；这里只做两件事：
+
+    1. 缺列时 ``ALTER TABLE`` 补列（``fleet_position`` 允许为空，不打断旧库写入）；
+    2. 按 :data:`utils.codex_options.SHIP_TYP_FLEET_POSITION` 回填空值。
+
+    回填只填空值，不会覆盖已有结果，因此可重复执行；表不存在时直接跳过。
+
+    Args:
+        db_path: 可选的数据库路径，默认使用全局配置。
+    """
+    path = db_path or DatabaseConnection.getDbPath()
+    with DatabaseContext(path) as conn:
+        columns = _tableColumns(conn, CODEX_GROUP_TABLE)
+        if not columns:
+            return
+        if "fleet_position" not in columns:
+            conn.execute(
+                f"ALTER TABLE {CODEX_GROUP_TABLE} ADD COLUMN fleet_position STRING(32)"
+            )
+        # 回填会 UPDATE 全部行，必须避开 date_edit 触发器，否则历史编辑时间被刷成本次运行时间
+        with suspendCodexGroupModtimeTrigger(conn):
+            _backfillFleetPosition(conn)
+
+
+@contextmanager
+def suspendCodexGroupModtimeTrigger(conn: sqlite3.Connection) -> Iterator[bool]:
+    """
+    临时移除 ``codex_group`` 的 ``update_codex_group_modtime`` 触发器，退出时原样重建。
+
+    该触发器会在该表任意 UPDATE 之后把 ``date_edit`` 改写为当前时间。批量回填 /
+    修正舰种时若不处理，会把全表（或整批）历史编辑时间刷成本次运行时间——
+    2026-10-12 的数据修正已踩过一次。SQLite 的 DDL 参与事务，因此
+    「DROP → 写入 → 原样 CREATE」在同一事务内完成，失败可整体回滚。
+
+    Args:
+        conn: 数据库连接（调用方负责事务的提交 / 回滚）。
+
+    Yields:
+        触发器存在并被临时移除时返回 True，否则返回 False（无触发器时不做任何事）。
+    """
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+        (CODEX_GROUP_MODTIME_TRIGGER,),
+    ).fetchone()
+    trigger_sql = row[0] if row else None
+    if not trigger_sql:
+        yield False
+        return
+    conn.execute(f"DROP TRIGGER {CODEX_GROUP_MODTIME_TRIGGER}")
+    try:
+        yield True
+    finally:
+        conn.execute(trigger_sql)
+
+
+def _backfillFleetPosition(conn: sqlite3.Connection) -> None:
+    """
+    按舰种口径回填 ``fleet_position``。
+
+    只处理空值（NULL / 空串），保留已人工确认的位置；未登记舰种保持为空，
+    由使用方显示为「未分类」而不是猜一个位置。
+
+    Args:
+        conn: 数据库连接。
+    """
+    for ship_typ, position in codex_options.SHIP_TYP_FLEET_POSITION.items():
+        conn.execute(
+            f"UPDATE {CODEX_GROUP_TABLE} SET fleet_position = ?"
+            " WHERE ship_typ = ? AND (fleet_position IS NULL OR fleet_position = '')",
+            (position, ship_typ),
+        )
 
 
 def _tableColumns(conn: sqlite3.Connection, table: str) -> Set[str]:
