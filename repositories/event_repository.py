@@ -12,6 +12,7 @@ from typing import Dict, List, Optional, Tuple
 
 from models.event_model import EventRecordModel
 from repositories.base_repository import BaseRepository
+from utils.constants import EVENT_STATUS_ONGOING
 from utils.db_connection import DatabaseConnection
 from utils.exceptions import DatabaseError
 
@@ -133,6 +134,32 @@ class EventRepository(BaseRepository[EventRecordModel]):
             return EventRecordModel.fromDict(results[0]) if results else None
         except Exception as e:
             raise DatabaseError(f"查询活动记录详情失败: {e}")
+
+    def findLatestOngoing(self) -> Optional[EventRecordModel]:
+        """
+        查询最近一条「进行中」的活动记录。
+
+        任务看板的建造任务用它自动关联活动：状态为 ``进行中`` 时按开始日期、
+        ID 倒序取第一条，与常规录入下拉的默认选择保持一致。
+
+        Returns:
+            活动记录模型；没有进行中活动时返回 None。
+
+        Raises:
+            DatabaseError: 当查询失败时抛出。
+        """
+        sql = f"""
+            SELECT {EVENT_COLUMNS}
+            FROM {self.TABLE}
+            WHERE status = ?
+            ORDER BY event_date DESC, id DESC
+            LIMIT 1
+        """
+        try:
+            results = DatabaseConnection.executeQuery(sql, (EVENT_STATUS_ONGOING,))
+            return EventRecordModel.fromDict(results[0]) if results else None
+        except Exception as e:
+            raise DatabaseError(f"查询进行中活动失败: {e}")
 
     def findYearOptions(self) -> List[str]:
         """
@@ -353,6 +380,52 @@ class EventRepository(BaseRepository[EventRecordModel]):
             return DatabaseConnection.executeUpdate(sql, (record_id,)) > 0
         except sqlite3.Error as e:
             raise DatabaseError(f"删除活动记录失败: {e}")
+
+    def adjustTicketBuildCount(
+        self, record_id: int, delta: int, conn: Optional[sqlite3.Connection] = None
+    ) -> bool:
+        """
+        增减活动的建造券抽次数（任务看板「建造」任务联动）。
+
+        口径：
+
+        - ``delta=+1``：券抽 +1，并把 ``use_ticket`` 置 1（券抽只有开启时才计入建造次数）；
+        - ``delta=-1``：券抽 -1 且不低于 0，减到 0 时把 ``use_ticket`` 清 0。
+
+        只改这两列，不覆盖用户手工维护的单耗、建造次数与备注。
+
+        Args:
+            record_id: 活动记录 ID。
+            delta: ``+1`` 或 ``-1``。
+            conn: 可选的调用方连接（与明细写入合并进同一事务）。
+
+        Returns:
+            是否有行被更新。
+
+        Raises:
+            ValueError: ``delta`` 不是 ±1 时抛出。
+            DatabaseError: 当更新失败时抛出。
+        """
+        if delta not in (-1, 1):
+            raise ValueError(f"券抽次数只允许 +1 / -1：{delta}")
+
+        sql = f"""
+            UPDATE {self.TABLE}
+               SET ticket_build_count = MAX(COALESCE(ticket_build_count, 0) + ?, 0),
+                   use_ticket = CASE
+                       WHEN MAX(COALESCE(ticket_build_count, 0) + ?, 0) > 0 THEN 1
+                       ELSE 0
+                   END,
+                   updated_at = datetime('now', 'localtime')
+             WHERE id = ?
+        """
+        params = (delta, delta, record_id)
+        try:
+            if conn is not None:
+                return conn.execute(sql, params).rowcount > 0
+            return DatabaseConnection.executeUpdate(sql, params) > 0
+        except sqlite3.Error as e:
+            raise DatabaseError(f"调整活动建造券次数失败: {e}")
 
     def unlinkTransactions(
         self, event_id: int, conn: Optional[sqlite3.Connection] = None

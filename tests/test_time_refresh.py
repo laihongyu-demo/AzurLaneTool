@@ -198,7 +198,7 @@ class TestCubeTaskBoardTime(_TempDatabaseCase):
         board = self._buildBoard(base)
 
         with freeze_time(next_day):
-            board._onCompleteRequested("daily_build_once")
+            board._onCompleteRequested("daily_battle_win")
 
         rows = self._query("SELECT record_time FROM resource_transaction")
         self.assertEqual(len(rows), 1)
@@ -213,7 +213,7 @@ class TestCubeTaskBoardTime(_TempDatabaseCase):
 
         with freeze_time(next_day):
             board.onActivated()
-            board._onCompleteRequested("daily_build_once")
+            board._onCompleteRequested("daily_battle_win")
 
         self.assertEqual(board._dateEdit.date().toPyDate(), date(2026, 10, 17))
         self.assertIn("所选日", board._periodLabel.text())

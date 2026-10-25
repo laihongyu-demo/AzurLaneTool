@@ -184,6 +184,10 @@ class EventRecordService:
         """
         构造展示行：有明细时按单耗折算建造次数，无明细时回退手填值。
 
+        券抽（``ticket_build_count``）不消耗魔方，任务看板用建造券完成日常建造时会把它 +1；
+        因此「没有关联魔方明细但有券抽」时也要计入：券抽叠加在手工 / 历史值上，
+        避免把用户手填的建造次数覆盖掉。
+
         Args:
             record: 活动记录。
             transaction_count: 关联明细笔数。
@@ -192,7 +196,10 @@ class EventRecordService:
         Returns:
             展示行。
         """
-        if not transaction_count:
+        cost = record.build_cost or EVENT_DEFAULT_BUILD_COST
+        ticket = (record.ticket_build_count or 0) if record.use_ticket else 0
+
+        if not transaction_count and not ticket:
             return EventRecordView(
                 record=record,
                 transaction_count=0,
@@ -201,9 +208,19 @@ class EventRecordService:
                 derived=False,
             )
 
-        cost = record.build_cost or EVENT_DEFAULT_BUILD_COST
         cube_builds, remainder = divmod(cube_expense, cost)
-        ticket = (record.ticket_build_count or 0) if record.use_ticket else 0
+        if not transaction_count:
+            return EventRecordView(
+                record=record,
+                transaction_count=0,
+                cube_expense=0,
+                build_count=(record.build_count or 0) + ticket,
+                cube_build_count=0,
+                ticket_build_count=ticket,
+                remainder=0,
+                derived=True,
+            )
+
         return EventRecordView(
             record=record,
             transaction_count=transaction_count,

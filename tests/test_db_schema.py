@@ -65,6 +65,18 @@ CREATE TABLE cube_task (
 );
 """
 
+LEGACY_CUBE_TASK_COMPLETION_SCHEMA = """
+CREATE TABLE cube_task_completion (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_code      TEXT NOT NULL,
+    period_key     TEXT NOT NULL,
+    completed_at   TEXT NOT NULL,
+    transaction_id INTEGER,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    UNIQUE (task_code, period_key)
+);
+"""
+
 LEGACY_EVENT_SCHEMA = """
 CREATE TABLE event_record (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -221,6 +233,36 @@ class TestSchemaBootstrap(unittest.TestCase):
         self.assertEqual(legacy, ("cube", ""))
         self.assertEqual(red_count, 6)
         self.assertEqual(trade_table, 1)
+
+    def testUpgradesLegacyCompletionBuildColumns(self):
+        """旧完成记录表补建造支出 / 关联活动两列，历史行保持为空。"""
+        conn = sqlite3.connect(self._db_path)
+        try:
+            conn.executescript(LEGACY_CUBE_TASK_COMPLETION_SCHEMA)
+            conn.execute(
+                "INSERT INTO cube_task_completion"
+                " (task_code, period_key, completed_at, transaction_id)"
+                " VALUES ('daily_build_once', '2026-10-17', '2026-10-17 12:00:00', 5)"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        ensureResourceStatisticsSchema(self._db_path)
+
+        conn = sqlite3.connect(self._db_path)
+        try:
+            columns = _columns(conn, "cube_task_completion")
+            row = conn.execute(
+                "SELECT task_code, transaction_id, expense_transaction_id, event_id"
+                " FROM cube_task_completion"
+            ).fetchone()
+        finally:
+            conn.close()
+
+        self.assertIn("expense_transaction_id", columns)
+        self.assertIn("event_id", columns)
+        self.assertEqual(row, ("daily_build_once", 5, None, None))
 
     def testUpgradeIsIdempotent(self):
         """重复执行不报错、不重复改数据。"""

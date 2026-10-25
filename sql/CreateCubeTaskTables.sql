@@ -17,14 +17,19 @@ CREATE TABLE IF NOT EXISTS cube_task (
     active       INTEGER NOT NULL DEFAULT 1
 );
 
--- 完成记录：一条记录对应一笔魔方收入；transaction_id 为空表示"仅标记不记账"（期初对齐的兜底）
+-- 完成记录：一条记录对应一笔收入；transaction_id 为空表示"仅标记不记账"（期初对齐的兜底）
+-- 建造任务（daily_build_once）额外挂两笔联动：
+--   expense_transaction_id：建造支出明细（使用建造券时为空，表示不扣魔方）；
+--   event_id：本次建造关联 / 计数的进行中活动，取消时据此回滚券抽次数。
 CREATE TABLE IF NOT EXISTS cube_task_completion (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    task_code      TEXT NOT NULL,
-    period_key     TEXT NOT NULL,
-    completed_at   TEXT NOT NULL,
-    transaction_id INTEGER,
-    created_at     TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_code              TEXT NOT NULL,
+    period_key             TEXT NOT NULL,
+    completed_at           TEXT NOT NULL,
+    transaction_id         INTEGER,
+    expense_transaction_id INTEGER,
+    event_id               INTEGER,
+    created_at             TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
     UNIQUE (task_code, period_key)
 );
 

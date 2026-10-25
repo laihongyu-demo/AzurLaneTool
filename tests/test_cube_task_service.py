@@ -207,10 +207,10 @@ class TestCompleteAndCancel(_TempTaskDatabaseCase):
     def testCompleteWritesTransactionAndCompletion(self):
         """完成会写一笔收入明细并登记完成记录。"""
         moment = self._moment()
-        result = self._service.completeTask("daily_build_once", moment)
+        result = self._service.completeTask("daily_battle_win", moment)
 
         self.assertTrue(result.success)
-        self.assertIn("+1", result.toStatusBarMessage())
+        self.assertIn("+2", result.toStatusBarMessage())
 
         transactions = self._query(
             "SELECT direction, record_time, category, amount, note FROM resource_transaction"
@@ -220,14 +220,14 @@ class TestCompleteAndCancel(_TempTaskDatabaseCase):
         self.assertEqual(direction, "income")
         self.assertEqual(record_time, moment.strftime("%Y-%m-%d %H:%M:%S"))
         self.assertEqual(category, "日常任务")
-        self.assertEqual(amount, 1)
-        self.assertIn("建造舰船", note)
+        self.assertEqual(amount, 2)
+        self.assertIn("战斗胜利", note)
 
         completions = self._query(
             "SELECT task_code, period_key, transaction_id FROM cube_task_completion"
         )
         self.assertEqual(len(completions), 1)
-        self.assertEqual(completions[0][0], "daily_build_once")
+        self.assertEqual(completions[0][0], "daily_battle_win")
         self.assertEqual(completions[0][1], moment.strftime("%Y-%m-%d"))
         self.assertIsNotNone(completions[0][2])
 
@@ -257,11 +257,11 @@ class TestCompleteAndCancel(_TempTaskDatabaseCase):
     def testDifferentPeriodsAllowed(self):
         """不同周期的同一任务可以分别完成。"""
         today = date.today()
-        self._service.completeTask("daily_build_once", datetime.now().replace(microsecond=0))
+        self._service.completeTask("daily_battle_win", datetime.now().replace(microsecond=0))
         # 昨天属于上一个「日」周期
         yesterday = today - timedelta(days=1)
         self._service.completeTask(
-            "daily_build_once", datetime.combine(yesterday, datetime.min.time()).replace(hour=12)
+            "daily_battle_win", datetime.combine(yesterday, datetime.min.time()).replace(hour=12)
         )
 
         self.assertEqual(len(self._query("SELECT id FROM cube_task_completion")), 2)
@@ -329,7 +329,7 @@ class TestBoardState(_TempTaskDatabaseCase):
     def testOrphanDetectedWhenTransactionRemoved(self):
         """手工删掉明细后，看板把完成记录标记为孤儿。"""
         moment = datetime.now().replace(microsecond=0)
-        self._service.completeTask("daily_build_once", moment)
+        self._service.completeTask("daily_battle_win", moment)
 
         conn = sqlite3.connect(self._db_path)
         try:
@@ -341,13 +341,13 @@ class TestBoardState(_TempTaskDatabaseCase):
         groups = {group.key: group for group in self._service.getBoard(moment.date())}
         task_states = {state.task.code: state for state in groups["task"].tasks}
 
-        self.assertTrue(task_states["daily_build_once"].completed)
-        self.assertTrue(task_states["daily_build_once"].orphan)
+        self.assertTrue(task_states["daily_battle_win"].completed)
+        self.assertTrue(task_states["daily_battle_win"].orphan)
 
     def testCancelToleratesMissingTransaction(self):
         """明细已被删除时，取消仍能清理完成记录。"""
         moment = datetime.now().replace(microsecond=0)
-        self._service.completeTask("daily_build_once", moment)
+        self._service.completeTask("daily_battle_win", moment)
 
         conn = sqlite3.connect(self._db_path)
         try:
@@ -356,7 +356,7 @@ class TestBoardState(_TempTaskDatabaseCase):
         finally:
             conn.close()
 
-        result = self._service.cancelTask("daily_build_once", moment.date())
+        result = self._service.cancelTask("daily_battle_win", moment.date())
 
         self.assertTrue(result.success)
         self.assertIn("关联明细已不存在", result.toStatusBarMessage())

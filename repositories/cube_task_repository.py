@@ -108,7 +108,8 @@ class CubeTaskRepository(BaseRepository[CubeTaskModel]):
             DatabaseError: 当查询失败时抛出。
         """
         sql = f"""
-            SELECT id, task_code, period_key, completed_at, transaction_id, created_at
+            SELECT id, task_code, period_key, completed_at, transaction_id,
+                   expense_transaction_id, event_id, created_at
             FROM {self.COMPLETION_TABLE}
             WHERE task_code = ? AND period_key = ?
         """
@@ -141,7 +142,8 @@ class CubeTaskRepository(BaseRepository[CubeTaskModel]):
 
         placeholders = ", ".join("?" for _ in keys)
         sql = f"""
-            SELECT id, task_code, period_key, completed_at, transaction_id, created_at
+            SELECT id, task_code, period_key, completed_at, transaction_id,
+                   expense_transaction_id, event_id, created_at
             FROM {self.COMPLETION_TABLE}
             WHERE period_key IN ({placeholders})
         """
@@ -172,7 +174,8 @@ class CubeTaskRepository(BaseRepository[CubeTaskModel]):
 
         placeholders = ", ".join("?" for _ in codes)
         sql = f"""
-            SELECT id, task_code, period_key, completed_at, transaction_id, created_at
+            SELECT id, task_code, period_key, completed_at, transaction_id,
+                   expense_transaction_id, event_id, created_at
             FROM {self.COMPLETION_TABLE}
             WHERE task_code IN ({placeholders})
             ORDER BY completed_at
@@ -205,13 +208,15 @@ class CubeTaskRepository(BaseRepository[CubeTaskModel]):
         """
         sql = f"""
             INSERT INTO {self.COMPLETION_TABLE}
-                (task_code, period_key, completed_at, transaction_id)
-            VALUES (?, ?, ?, ?)
+                (task_code, period_key, completed_at, transaction_id,
+                 expense_transaction_id, event_id)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(task_code, period_key) DO NOTHING
         """
         params = (
             completion.task_code, completion.period_key,
             completion.completed_at, completion.transaction_id,
+            completion.expense_transaction_id, completion.event_id,
         )
         try:
             if conn is not None:

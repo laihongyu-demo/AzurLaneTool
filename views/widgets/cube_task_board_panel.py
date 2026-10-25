@@ -7,31 +7,37 @@
 - 魔方：任务 / 每月签到 / 世界巡游 / 常规录入；
 - 红尖尖：世界巡游，不附带常规录入分组。
 
+日常「建造舰船 1 次」例外：单击先弹确认框选卡池（或建造券），确认后写「建造支出 +
+任务奖励」两笔，取消时两笔一起删。口径见
+``docs/20261025_日常建造任务两笔明细方案.md``。
+
 布局约定：
 - 分组与卡片都填满所在网格单元（``Expanding``），右边缘对齐、不留缺口；
+- 头部与看板网格同列宽，「档期」下拉右边缘锚定在所在列右边界；
 - 列数按可用宽度自适应：宽屏 2 列、窄屏 1 列；只有 1 个分组时强制单列；
 - 卡片只显示短标签（``short_name``），完整任务名放 tooltip，避免长文本撑宽控件。
 """
 
 from datetime import date, datetime
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence
 
 from PyQt5.QtCore import QDate, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
-    QComboBox, QDateEdit, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMessageBox,
-    QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    QComboBox, QDateEdit, QDialog, QGridLayout, QGroupBox, QHBoxLayout, QLabel,
+    QMessageBox, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from services.cube_task_service import (
-    CubeTaskGroupView, CubeTaskService, CubeTaskState, CubeTaskWriteResult,
+    BUILD_TASK_CODE, CubeTaskGroupView, CubeTaskService, CubeTaskState, CubeTaskWriteResult,
 )
 from services.world_cruise_service import WorldCruiseService
 from utils import time_source
 from utils.constants import (
-    QT_DATE_DISPLAY_FORMAT, RESOURCE_DISPLAY_NAMES, TASK_GROUP_DAILY,
+    QT_DATE_DISPLAY_FORMAT, RESOURCE_DISPLAY_NAMES, RESOURCE_TYPE_CUBE, TASK_GROUP_DAILY,
     TASK_GROUP_WEEKLY, TASK_PERIOD_CRUISE, TASK_PERIODS,
 )
 from utils.exceptions import DatabaseError, ValidationError
+from views.dialogs.build_task_dialog import BuildTaskDialog
 from views.widgets.regular_entry_panel import RegularEntryPanel
 
 COMPLETED_STYLE = """
@@ -77,6 +83,15 @@ CARDS_PER_ROW = 4
 
 # 面板宽度达到该值时分组按 2 列排布；再窄就单列，避免卡片文字被挤掉
 TWO_COLUMN_MIN_WIDTH = 940
+
+# 档期下拉：右边缘锚定在所在列的右边界（魔方看板即「任务」分组右边缘），
+# 宽度在区间内自适应，空间不足时收窄而不是把头部撑出横向滚动条。
+PERIOD_COMBO_MIN_WIDTH = 120
+PERIOD_COMBO_MAX_WIDTH = 190
+PERIOD_COMBO_HEIGHT = 28
+
+# 头部两段式布局的列间距，必须与看板网格的列间距一致，否则右边缘会错开
+HEADER_COLUMN_SPACING = 12
 
 
 def buildCardText(task, completed: bool) -> str:
@@ -132,6 +147,7 @@ class CubeTaskCard(QPushButton):
         """按完成状态刷新文案、样式与提示。"""
         task = self._state.task
         self.setText(buildCardText(task, self._state.completed))
+        is_build_task = task.code == BUILD_TASK_CODE
 
         if self._state.completed:
             if self._state.orphan:
@@ -144,13 +160,37 @@ class CubeTaskCard(QPushButton):
                 tip = f"{task.name}\n完成于 {self._state.completed_at}"
                 if self._state.marked_only:
                     tip += "\n（仅标记，未生成收入明细）"
+                elif is_build_task:
+                    tip += self._buildExpenseTip()
                 tip += "\n双击可取消完成"
                 self.setToolTip(tip)
         else:
             self.setStyleSheet(PENDING_STYLE)
-            self.setToolTip(
-                f"{task.name}\n{task.category}｜单击标记完成并 +{task.reward} 个{self._resource_name}"
-            )
+            if is_build_task:
+                self.setToolTip(
+                    f"{task.name}\n单击选择卡池：记一笔建造支出 + 一笔"
+                    f"{task.category}收入（使用建造券则不扣魔方）"
+                )
+            else:
+                self.setToolTip(
+                    f"{task.name}\n{task.category}｜单击标记完成并 +{task.reward} 个{self._resource_name}"
+                )
+
+    def _buildExpenseTip(self) -> str:
+        """
+        生成建造任务的收支提示（已完成状态）。
+
+        Returns:
+            形如 ``支出 · 轻型建造 1`` / ``使用建造券（不扣魔方）`` 的说明行。
+        """
+        state = self._state
+        if state.expense_category:
+            expense = f"支出 · {state.expense_category} {state.expense_amount}"
+        elif state.expense_transaction_id is not None:
+            expense = "支出明细已被删除"
+        else:
+            expense = "使用建造券（不扣魔方）"
+        return f"\n{expense}\n收入 · {state.task.category} +{state.task.reward}"
 
     def _onClicked(self) -> None:
         """单击：未完成 → 请求完成；已完成 → 忽略（避免双击误触发完成）。"""
@@ -256,15 +296,26 @@ class CubeTaskBoardPanel(QWidget):
 
         layout.addWidget(self._group)
 
-    def _buildHeader(self) -> QHBoxLayout:
+    def _buildHeader(self) -> QGridLayout:
         """
         构建顶部工具条（记账日期 + 档期 + 周期信息 + 刷新）。
 
+        采用与看板网格同列宽的两段式布局：左段放日期 / 今天 / 档期，右段放刷新与
+        周期信息。两段 stretch 相等、列间距与 ``_boardLayout`` 一致，因此「档期」下拉
+        的右边缘恒等于左列的右边界（魔方看板即「任务」分组的右边缘）。
+        单列（窄屏）时右段移到第二行，避免撑出横向滚动条。
+
         Returns:
-            水平布局。
+            网格布局。
         """
-        header = QHBoxLayout()
-        header.setSpacing(6 if self._compact_header else 8)
+        header = QGridLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setHorizontalSpacing(HEADER_COLUMN_SPACING)
+        header.setVerticalSpacing(6)
+        self._headerLayout = header
+        self._headerColumns = 0
+
+        spacing = 6 if self._compact_header else 8
 
         self._dateEdit = QDateEdit(self)
         self._dateEdit.setCalendarPopup(True)
@@ -286,8 +337,9 @@ class CubeTaskBoardPanel(QWidget):
         self._refreshBtn.setVisible(not self._compact_header)
 
         self._periodCombo = QComboBox(self)
-        self._periodCombo.setFixedWidth(140 if self._compact_header else 190)
-        self._periodCombo.setMaximumHeight(28)
+        self._periodCombo.setMinimumWidth(PERIOD_COMBO_MIN_WIDTH)
+        self._periodCombo.setMaximumWidth(PERIOD_COMBO_MAX_WIDTH)
+        self._periodCombo.setFixedHeight(PERIOD_COMBO_HEIGHT)
         self._periodCombo.setToolTip("选择世界巡游档期；默认当前双月期")
         self._refreshPeriodOptions(self._auto_date)
 
@@ -295,19 +347,60 @@ class CubeTaskBoardPanel(QWidget):
         self._periodLabel.setStyleSheet("color: #666; font-size: 12px;")
         self._periodLabel.setWordWrap(True)
 
-        header.addWidget(QLabel("记账日期:", self))
-        header.addWidget(self._dateEdit)
-        header.addWidget(self._todayBtn)
+        self._headerLeft = QWidget(self)
+        left = QHBoxLayout(self._headerLeft)
+        left.setContentsMargins(0, 0, 0, 0)
+        left.setSpacing(spacing)
+        left.addWidget(QLabel("记账日期:", self))
+        left.addWidget(self._dateEdit)
+        left.addWidget(self._todayBtn)
         if TASK_PERIOD_CRUISE in self._period_types:
-            header.addWidget(QLabel("档期:", self))
-            header.addWidget(self._periodCombo)
-        header.addWidget(self._refreshBtn)
+            # 弹性空白放在档期之前，把下拉顶到左段右边界
+            left.addStretch(1)
+            left.addWidget(QLabel("档期:", self))
+            left.addWidget(self._periodCombo)
+        else:
+            left.addStretch(1)
+
+        self._headerRight = QWidget(self)
+        right = QHBoxLayout(self._headerRight)
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(spacing)
+        right.addWidget(self._refreshBtn)
         if not self._compact_header:
-            header.addSpacing(8)
-            header.addWidget(self._periodLabel, 1)
+            right.addSpacing(8)
+            right.addWidget(self._periodLabel, 1)
         else:
             self._periodLabel.setVisible(False)
+
         return header
+
+    def _applyHeaderMode(self, columns: int) -> None:
+        """
+        按看板列数切换头部排布（两段并排 / 上下两行）。
+
+        Args:
+            columns: 看板列数（1 或 2）。
+        """
+        if columns == self._headerColumns:
+            return
+        self._headerColumns = columns
+
+        layout = self._headerLayout
+        layout.removeWidget(self._headerLeft)
+        layout.removeWidget(self._headerRight)
+        layout.setColumnStretch(0, 1)
+        layout.setColumnStretch(1, 1 if columns >= 2 else 0)
+
+        layout.addWidget(self._headerLeft, 0, 0)
+        if columns >= 2:
+            layout.addWidget(self._headerRight, 0, 1)
+            self._headerRight.setVisible(True)
+        else:
+            layout.addWidget(self._headerRight, 1, 0)
+            # 紧凑头部（红尖尖）右侧没有可见内容，单列时整行隐藏，避免多出空白
+            self._headerRight.setVisible(not self._compact_header)
+        layout.activate()
 
     def _toQDate(self, value: date) -> QDate:
         """
@@ -509,7 +602,12 @@ class CubeTaskBoardPanel(QWidget):
         self.refreshData()
 
     def _onCompleteRequested(self, task_code: str) -> None:
-        """完成请求事件处理。"""
+        """完成请求事件处理：建造任务先弹确认框，其余任务直接记一笔收入。"""
+        state = self._state_by_code.get(task_code)
+        if state is not None and self._isBuildTask(state):
+            self._completeBuildTask(state)
+            return
+
         try:
             result = self._task_service.completeTask(task_code, self._resolveMoment())
         except ValidationError as e:
@@ -521,6 +619,69 @@ class CubeTaskBoardPanel(QWidget):
 
         self._afterWrite(result)
 
+    def _isBuildTask(self, state: CubeTaskState) -> bool:
+        """
+        判断是否为需要选择卡池的建造任务。
+
+        Args:
+            state: 任务状态。
+
+        Returns:
+            建造任务返回 True。
+        """
+        return (
+            state.task.code == BUILD_TASK_CODE
+            and self._resource_type == RESOURCE_TYPE_CUBE
+        )
+
+    def _completeBuildTask(self, state: CubeTaskState) -> None:
+        """
+        建造任务：弹确认框选卡池 / 建造券，再写两笔明细。
+
+        Args:
+            state: 建造任务状态。
+        """
+        moment = self._resolveMoment()
+        try:
+            plan = self._task_service.getBuildPlan()
+        except DatabaseError as e:
+            QMessageBox.critical(self, "数据库错误", f"查询进行中活动失败: {e}")
+            return
+
+        dialog = self._createBuildDialog(plan, state.task, moment)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+
+        try:
+            result = self._task_service.completeBuildTask(
+                state.task.code,
+                moment,
+                dialog.selectedPoolKey(),
+                dialog.useTicket(),
+            )
+        except ValidationError as e:
+            QMessageBox.warning(self, "无法完成", str(e))
+            return
+        except DatabaseError as e:
+            QMessageBox.critical(self, "数据库错误", f"记录失败: {e}")
+            return
+
+        self._afterWrite(result)
+
+    def _createBuildDialog(self, plan, task, moment) -> BuildTaskDialog:
+        """
+        构造建造确认对话框（独立成方法，便于测试替换）。
+
+        Args:
+            plan: 卡池与进行中活动信息。
+            task: 建造任务定义。
+            moment: 记账时刻。
+
+        Returns:
+            对话框实例。
+        """
+        return BuildTaskDialog(plan, task, moment, self)
+
     def _onCancelRequested(self, task_code: str) -> None:
         """取消请求事件处理（双击已完成卡片）。"""
         state = self._state_by_code.get(task_code)
@@ -529,10 +690,17 @@ class CubeTaskBoardPanel(QWidget):
 
         message = f"确定取消「{state.task.name}」的完成状态吗？"
         if state.completed_at:
-            message += (
-                f"\n完成于 {state.completed_at}，将删除对应的 "
-                f"{state.task.reward} 个{self._resource_name}收入记录。"
-            )
+            if self._isBuildTask(state):
+                message += (
+                    f"\n完成于 {state.completed_at}，将删除："
+                    f"\n· 收入 · {state.task.category} {state.task.reward}"
+                    f"\n{self._buildExpenseCancelLine(state)}"
+                )
+            else:
+                message += (
+                    f"\n完成于 {state.completed_at}，将删除对应的 "
+                    f"{state.task.reward} 个{self._resource_name}收入记录。"
+                )
         reply = QMessageBox.question(
             self, "确认取消", message, QMessageBox.Yes | QMessageBox.No, QMessageBox.No
         )
@@ -550,6 +718,22 @@ class CubeTaskBoardPanel(QWidget):
             return
 
         self._afterWrite(result)
+
+    def _buildExpenseCancelLine(self, state: CubeTaskState) -> str:
+        """
+        生成取消确认里的支出说明。
+
+        Args:
+            state: 建造任务状态。
+
+        Returns:
+            形如 ``· 支出 · 轻型建造 1`` 的说明行。
+        """
+        if state.expense_category:
+            return f"· 支出 · {state.expense_category} {state.expense_amount}"
+        if state.expense_transaction_id is not None:
+            return "· 支出明细已被删除（仅清理完成记录）"
+        return "· 使用建造券：没有支出，将回滚进行中活动的券抽次数"
 
     def _afterWrite(self, result: CubeTaskWriteResult) -> None:
         """
@@ -664,6 +848,7 @@ class CubeTaskBoardPanel(QWidget):
         self._clearBoard()
         columns = self._desiredColumns()
         self._current_columns = columns
+        self._applyHeaderMode(columns)
 
         widgets: List[QWidget] = [self._buildGroupBox(view) for view in self._groups]
         if self._include_entry:
