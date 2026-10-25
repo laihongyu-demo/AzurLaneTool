@@ -1,18 +1,25 @@
 """
-指级效率算法单元测试（#16）。
+指级效率算法单元测试（#16 v1 / #23 v2）。
 
-口径见 docs/指级效率算法方案_20261018.md。用内存桩替换仓储，
-覆盖：日窗口取点、同日去重、跨级换算、扩窗、降级与满级边界。
+口径见 docs/指级效率算法优化方案_20261018.md。用内存桩替换仓储，
+覆盖：日窗口取点、同日去重、跨级换算、扩窗、降级与满级边界；
+v2 追加：近期连续块、趋势档位、异常隔离、缺口、数据新鲜度与升级情景。
 """
 
 import unittest
 from datetime import datetime, timedelta
+from unittest.mock import patch
 
 from models.commander_model import CommanderLevelExpModel, CommanderSnapshotModel
-from services.commander_service import CommanderService
+from services.commander_service import (
+    CommanderService, TREND_ACCELERATING, TREND_DECELERATING, TREND_STABLE,
+)
+from utils.exceptions import DatabaseError
 
-# 合成基准：1～199 级每级 100 经验，200 级为满级（NULL）
-LEVEL_UP_EXP = 100
+# 合成基准：1～199 级每级 100 万经验，200 级为满级（NULL）。
+# 取 100 万是为了让快照的本级经验（测试里到 75 万）不超过本级需求，
+# 与真实库「本级经验 <= level_up_exp」的约束一致（#23 §4.1 异常校验）。
+LEVEL_UP_EXP = 1_000_000
 FULL_LEVEL = 200
 
 
@@ -94,13 +101,13 @@ class TestAbsoluteExp(_EfficiencyCase):
         """L 级 = cum(L-1) + 本级经验。"""
         service = self._service([])
 
-        self.assertEqual(service.getAbsoluteExp(5, 30), 400 + 30)
+        self.assertEqual(service.getAbsoluteExp(5, 30), LEVEL_UP_EXP * 4 + 30)
 
     def testFullLevelStillComputable(self):
         """满级 200 只用到 cum(199)，不触碰 NULL 行。"""
         service = self._service([])
 
-        self.assertEqual(service.getAbsoluteExp(200, 500), 100 * 199 + 500)
+        self.assertEqual(service.getAbsoluteExp(200, 500), LEVEL_UP_EXP * 199 + 500)
 
     def testOutOfRangeLevelsReturnNone(self):
         """越界等级无法换算。"""
@@ -137,13 +144,13 @@ class TestWindowSelection(_EfficiencyCase):
     def testCrossLevelKeepsContinuous(self):
         """跨级时绝对经验连续，不出现负增量。"""
         snapshots = [
-            _snapshot(1, self._at(1), 3, 150),   # 200 + 150 = 350
-            _snapshot(2, self._at(0), 4, 150),   # 300 + 150 = 450
+            _snapshot(1, self._at(1), 3, 150),   # 2,000,000 + 150
+            _snapshot(2, self._at(0), 4, 150),   # 3,000,000 + 150
         ]
 
         efficiency = self._service(snapshots).getExpEfficiency()
 
-        self.assertEqual(efficiency.rate_per_day, 100)
+        self.assertEqual(efficiency.rate_per_day, LEVEL_UP_EXP)
 
     def testSameDayKeepsLastSnapshot(self):
         """同日多条只保留最后一条，样本数按天计。"""
@@ -279,6 +286,296 @@ class TestCardText(_EfficiencyCase):
         self.assertIn("近 30 天日均", tooltip)
         self.assertIn("2 条快照", tooltip)
         self.assertIn("累计日均", tooltip)
+
+
+class _MissingTableView:
+    """模拟旧库缺表：读取快照时抛 DatabaseError。"""
+
+    def findAll(self):
+        raise DatabaseError("no such table: commander_info")
+
+    def findLatest(self):
+        raise DatabaseError("no such table: commander_info")
+
+    def findLevelExp(self, level):
+        return None
+
+
+class TestRecentBlock(_EfficiencyCase):
+    """近期连续块（fast）测试（#23 §5.2）。"""
+
+    def testGapResetsRecentBlock(self):
+        """T-13：-12 天与 -3 天之间缺口 9 天，fast 只用 -3 之后的点。"""
+        snapshots = [
+            _snapshot(1, self._at(20), 5, 0),
+            _snapshot(2, self._at(12), 5, 100000),
+            _snapshot(3, self._at(3), 5, 400000),
+            _snapshot(4, self._at(1), 5, 500000),
+        ]
+
+        efficiency = self._service(snapshots).getExpEfficiency()
+
+        self.assertEqual(efficiency.fast_rate_per_day, 50000)
+        self.assertEqual(efficiency.fast_start_time, self._at(3).strftime("%Y-%m-%d %H:%M"))
+        self.assertEqual(efficiency.fast_sample_count, 2)
+        # 若错误地从 -12 天起算会得到 36,364/天
+        self.assertNotEqual(efficiency.fast_rate_per_day, 36364)
+
+    def testFastCapLimitsLookback(self):
+        """T-15：每日快照连续 20 天，fast 跨度被 cap 在 14 天。"""
+        snapshots = [
+            _snapshot(index + 1, self._at(19 - index), 5, (index + 1) * 1000)
+            for index in range(20)
+        ]
+
+        efficiency = self._service(snapshots).getExpEfficiency()
+
+        self.assertAlmostEqual(efficiency.fast_span_days, 14.0)
+        self.assertEqual(efficiency.fast_rate_per_day, 1000)
+        self.assertEqual(efficiency.fast_sample_count, 15)
+
+    def testGapOverSevenDaysLeavesSinglePoint(self):
+        """只有两条、跨度 10 天时，缺口 >7 天 → fast 为空。"""
+        snapshots = [
+            _snapshot(1, self._at(10), 5, 0),
+            _snapshot(2, self._at(0), 5, 100000),
+        ]
+
+        efficiency = self._service(snapshots).getExpEfficiency()
+
+        self.assertIsNone(efficiency.fast_rate_per_day)
+        self.assertIn("近期样本不足", self._service(snapshots).getExpEfficiencyTooltip())
+
+
+class TestTrend(_EfficiencyCase):
+    """趋势档位测试（#23 §5.3）。"""
+
+    def _accelerating(self):
+        """slow=1,000、fast=1,300 的一组快照。"""
+        return [
+            _snapshot(1, self._at(30), 5, 0),
+            _snapshot(2, self._at(10), 5, 17000),
+            _snapshot(3, self._at(5), 5, 23500),
+            _snapshot(4, self._at(0), 5, 30000),
+        ]
+
+    def testAccelerating(self):
+        """T-16：fast/slow ≈ 1.3 → 加速。"""
+        service = self._service(self._accelerating())
+        efficiency = service.getExpEfficiency()
+
+        self.assertEqual(efficiency.rate_per_day, 1000)
+        self.assertEqual(efficiency.fast_rate_per_day, 1300)
+        self.assertEqual(efficiency.trend, TREND_ACCELERATING)
+        self.assertAlmostEqual(efficiency.trend_ratio, 1.3)
+        self.assertIn("趋势 加速 +30%", service.getExpEfficiencyTooltip())
+
+    def testDecelerating(self):
+        """T-17：fast/slow ≈ 0.7 → 放缓，百分比带负号。"""
+        snapshots = [
+            _snapshot(1, self._at(30), 5, 0),
+            _snapshot(2, self._at(10), 5, 23000),
+            _snapshot(3, self._at(5), 5, 26500),
+            _snapshot(4, self._at(0), 5, 30000),
+        ]
+        service = self._service(snapshots)
+
+        self.assertEqual(service.getExpEfficiency().trend, TREND_DECELERATING)
+        self.assertIn("趋势 放缓 -30%", service.getExpEfficiencyTooltip())
+
+    def testStableIsNotShown(self):
+        """T-18：fast/slow = 1.1 → 平稳，tooltip 不显示趋势文字。"""
+        snapshots = [
+            _snapshot(1, self._at(30), 5, 0),
+            _snapshot(2, self._at(10), 5, 19000),
+            _snapshot(3, self._at(5), 5, 24500),
+            _snapshot(4, self._at(0), 5, 30000),
+        ]
+        service = self._service(snapshots)
+
+        self.assertEqual(service.getExpEfficiency().trend, TREND_STABLE)
+        tooltip = service.getExpEfficiencyTooltip()
+        self.assertNotIn("趋势", tooltip)
+        self.assertNotIn("加速", tooltip)
+        self.assertNotIn("放缓", tooltip)
+
+    def testTwoSamplesDoNotJudgeTrend(self):
+        """T-14：fast 有值但只有 2 条 → 不判趋势，tooltip 说明样本少。"""
+        snapshots = [
+            _snapshot(1, self._at(30), 5, 0),
+            _snapshot(2, self._at(5), 5, 250000),
+            _snapshot(3, self._at(0), 5, 300000),
+        ]
+        service = self._service(snapshots)
+        efficiency = service.getExpEfficiency()
+
+        self.assertEqual(efficiency.fast_rate_per_day, 10000)
+        self.assertIsNone(efficiency.trend)
+        self.assertIn("样本较少，暂不判断趋势", service.getExpEfficiencyTooltip())
+
+    def testSpanBelowThreeDaysDoesNotJudgeTrend(self):
+        """T-19：3 条但跨度 2 天 <3 天 → 不判趋势。"""
+        snapshots = [
+            _snapshot(1, self._at(30), 5, 0),
+            _snapshot(2, self._at(2), 5, 20000),
+            _snapshot(3, self._at(1), 5, 21000),
+            _snapshot(4, self._at(0), 5, 22000),
+        ]
+        service = self._service(snapshots)
+
+        self.assertIsNone(service.getExpEfficiency().trend)
+        self.assertIn("暂不判断趋势", service.getExpEfficiencyTooltip())
+
+
+class TestDataQuality(_EfficiencyCase):
+    """数据质量测试（#23 §4：异常隔离 / 缺口 / 新鲜度）。"""
+
+    def testExpOverRequirementIsIsolated(self):
+        """T-20：本级经验超过需求 → 该条隔离，其余照常计算。"""
+        snapshots = [
+            _snapshot(1, self._at(2), 5, 0),
+            _snapshot(2, self._at(1), 5, LEVEL_UP_EXP + 1),
+            _snapshot(3, self._at(0), 5, 10000),
+        ]
+        service = self._service(snapshots)
+        efficiency = service.getExpEfficiency()
+
+        self.assertEqual(efficiency.invalid_count, 1)
+        self.assertEqual(efficiency.rate_per_day, 5000)
+        self.assertIn("已隔离 1 条异常快照", service.getExpEfficiencyTooltip())
+
+    def testRollbackSnapshotIsIsolated(self):
+        """T-21a：绝对经验回退的那条被隔离，不参与计算。"""
+        snapshots = [
+            _snapshot(1, self._at(3), 5, 30000),
+            _snapshot(2, self._at(1), 5, 10000),
+            _snapshot(3, self._at(0), 5, 40000),
+        ]
+        service = self._service(snapshots)
+        efficiency = service.getExpEfficiency()
+
+        self.assertEqual(efficiency.invalid_count, 1)
+        self.assertEqual(efficiency.rate_per_day, round(10000 / 3))
+        self.assertIn("已隔离 1 条异常快照", service.getExpEfficiencyTooltip())
+
+    def testLatestInvalidFallsBack(self):
+        """T-21b：最新一条回退时回退到上一条有效快照，并在 tooltip 说明。"""
+        snapshots = [
+            _snapshot(1, self._at(3), 5, 0),
+            _snapshot(2, self._at(1), 5, 20000),
+            _snapshot(3, self._at(0), 5, 5000),
+        ]
+        service = self._service(snapshots)
+        efficiency = service.getExpEfficiency()
+
+        self.assertEqual(efficiency.end_time, self._at(1).strftime("%Y-%m-%d %H:%M"))
+        self.assertEqual(efficiency.rate_per_day, 10000)
+        self.assertIn("最新快照异常，已按上一条计算", service.getExpEfficiencyTooltip())
+
+    def testStaleDataIsReported(self):
+        """T-22：数据截止 10 天前 → stale_days=10，tooltip 提示未更新。"""
+        snapshots = [
+            _snapshot(1, self._at(15), 5, 0),
+            _snapshot(2, self._at(10), 5, 50000),
+        ]
+        service = self._service(snapshots)
+
+        with patch("utils.time_source.now", return_value=self.BASE):
+            efficiency = service.getExpEfficiency()
+            tooltip = service.getExpEfficiencyTooltip()
+
+        self.assertEqual(efficiency.stale_days, 10)
+        self.assertIn("数据已 10 天未更新", tooltip)
+
+    def testStaleDaysAdvancesAfterMidnight(self):
+        """跨天后缓存失效，stale_days 随"今天"推进，不需要重启应用。"""
+        snapshots = [
+            _snapshot(1, self._at(2), 5, 0),
+            _snapshot(2, self._at(1), 5, 10000),
+        ]
+        service = self._service(snapshots)
+
+        with patch("utils.time_source.now", return_value=self.BASE), \
+                patch("utils.time_source.today", return_value=self.BASE.date()):
+            first = service.getExpEfficiency()
+
+        next_day = self.BASE + timedelta(days=1)
+        with patch("utils.time_source.now", return_value=next_day), \
+                patch("utils.time_source.today", return_value=next_day.date()):
+            second = service.getExpEfficiency()
+
+        self.assertEqual(first.stale_days, 1)
+        self.assertEqual(second.stale_days, 2)
+
+    def testGapIsReported(self):
+        """T-23：窗口内 15 天缺口 → gap_days≈15，tooltip 提示。"""
+        snapshots = [
+            _snapshot(1, self._at(20), 5, 0),
+            _snapshot(2, self._at(5), 5, 100000),
+            _snapshot(3, self._at(0), 5, 200000),
+        ]
+        service = self._service(snapshots)
+
+        with patch("utils.time_source.now", return_value=self.BASE):
+            efficiency = service.getExpEfficiency()
+            tooltip = service.getExpEfficiencyTooltip()
+
+        self.assertAlmostEqual(efficiency.gap_days, 15.0)
+        self.assertIn("窗口内最大缺口 15.0 天", tooltip)
+
+    def testMissingTableDegradesQuietly(self):
+        """T-26：旧库缺表 → 按无快照降级，不抛异常。"""
+        service = CommanderService(_MissingTableView())
+
+        self.assertIsNone(service.getExpEfficiency().rate_per_day)
+        self.assertIn("暂无快照", service.getExpEfficiencyTooltip())
+
+    def testSlowRateMatchesV1Formula(self):
+        """T-25：v2 追加字段不影响主值，slow 仍与 v1 端点公式一致。"""
+        snapshots = [
+            _snapshot(1, self._at(31), 5, 10000),
+            _snapshot(2, self._at(5), 5, 50000),
+            _snapshot(3, self._at(0), 5, 60000),
+        ]
+
+        efficiency = self._service(snapshots).getExpEfficiency()
+
+        self.assertEqual(efficiency.rate_per_day, round(50000 / 31))
+        self.assertAlmostEqual(efficiency.span_days, 31.0)
+
+
+class TestUpgradeScenario(_EfficiencyCase):
+    """升级情景测试（#23 §6.3）。"""
+
+    def testScenarioShowsBothSlowAndFast(self):
+        """T-24：剩余 244,704、slow 11,374、fast 15,023 → 21.5 天 + 16.3 天，不写区间。"""
+        snapshots = [
+            _snapshot(1, self._at(30), 5, 414076),
+            _snapshot(2, self._at(10), 5, 605066),
+            _snapshot(3, self._at(7), 5, 650135),
+            _snapshot(4, self._at(3), 5, 700000),
+            _snapshot(5, self._at(0), 5, 755296),
+        ]
+        service = self._service(snapshots)
+
+        badge = service.getCommanderLevelCardBadge()
+        tooltip = service.getCommanderLevelCardTooltip()
+
+        self.assertEqual(badge.text, "预计 21.5 天后升级")
+        self.assertIn("若维持近期节奏 16.3 天后升级", tooltip)
+        self.assertNotIn("～", tooltip)
+
+    def testNoScenarioWhenTrendStable(self):
+        """趋势平稳时不输出近期情景，避免制造两个口径。"""
+        snapshots = [
+            _snapshot(1, self._at(30), 5, 0),
+            _snapshot(2, self._at(10), 5, 19000),
+            _snapshot(3, self._at(5), 5, 24500),
+            _snapshot(4, self._at(0), 5, 30000),
+        ]
+        service = self._service(snapshots)
+
+        self.assertNotIn("若维持近期节奏", service.getCommanderLevelCardTooltip())
 
 
 if __name__ == "__main__":
