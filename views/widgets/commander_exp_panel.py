@@ -15,7 +15,9 @@ from PyQt5.QtWidgets import (
 )
 
 from models.commander_model import CommanderSnapshotModel
-from services.commander_service import CommanderService
+from services.commander_service import (
+    CommanderService, TargetLevelProjection,
+)
 from utils import time_source
 from utils.constants import (
     COMMANDER_LEVEL_MAX, COMMANDER_LEVEL_MIN, COMMANDER_SNAPSHOT_RECENT_LIMIT,
@@ -26,8 +28,12 @@ from utils.exceptions import DatabaseError, ValidationError
 from utils.unit_formatter import formatExact
 
 TABLE_HEADERS = ["时间", "等级", "当前经验", "本级所需", "进度"]
+PREDICTION_HEADERS = ["目标等级", "还需经验", "30 天口径", "90 天口径", "预计日期"]
 ID_ROLE = Qt.UserRole
 DEFAULT_QUERY_RANGE_DAYS = 90
+# 超过这个天数时，预测属于“长期外推”，按 #35 方案标注误差量级
+LONG_HORIZON_DAYS = 90.0
+LONG_HORIZON_HINT = "长期估算，误差约 ±20%"
 
 
 class CommanderExpPanel(QWidget):
@@ -58,6 +64,9 @@ class CommanderExpPanel(QWidget):
         self._auto_start_date: Optional[date] = None
         self._auto_end_date: Optional[date] = None
         self._syncing_dates = False
+        # 升级预测：首次拿到有效当前等级时把目标设为「当前+1」，之后保留用户选择
+        self._prediction_initialized = False
+        self._prediction_loading = False
 
         self._initUi()
         self._connectSignals()
@@ -83,6 +92,7 @@ class CommanderExpPanel(QWidget):
         group_layout.addLayout(self._buildQueryLayout())
         group_layout.addWidget(self._buildTable())
         layout.addWidget(group)
+        layout.addWidget(self._buildPredictionGroup())
         layout.addStretch()
 
     def _buildFormLayout(self) -> QGridLayout:
@@ -290,6 +300,54 @@ class CommanderExpPanel(QWidget):
         self._table.setToolTip("选中一行可编辑该条记录；双击亦可进入编辑")
         return self._table
 
+    def _buildPredictionGroup(self) -> QGroupBox:
+        """
+        构建「升级预测」分组（#35）。
+
+        只读展示：自选目标等级 + 剩余经验 / 预计天数 / 长期参考 / 近期情景，
+        下方列出常用里程碑。不写库、不改卡片。
+
+        Returns:
+            预测分组控件。
+        """
+        group = QGroupBox("升级预测", self)
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(15, 20, 15, 15)
+        layout.setSpacing(8)
+
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addWidget(QLabel("目标等级", self))
+        self._targetSpin = QSpinBox(self)
+        self._targetSpin.setRange(COMMANDER_LEVEL_MIN, COMMANDER_LEVEL_MAX)
+        self._targetSpin.setFixedWidth(80)
+        self._targetSpin.setToolTip("自选目标等级；到 200 级按满级累计经验计算")
+        row.addWidget(self._targetSpin)
+        self._targetSummaryLabel = QLabel("-", self)
+        self._targetSummaryLabel.setMinimumWidth(180)
+        row.addWidget(self._targetSummaryLabel)
+        row.addStretch()
+        layout.addLayout(row)
+
+        self._targetDetailLabel = QLabel("-", self)
+        self._targetDetailLabel.setWordWrap(True)
+        self._targetDetailLabel.setToolTip(
+            "主口径为近 30 天日均；超过 90 天的目标属于长期外推，误差约 ±20%，"
+            "因此只给单值，不写区间"
+        )
+        layout.addWidget(self._targetDetailLabel)
+
+        self._predictionTable = QTableWidget(0, len(PREDICTION_HEADERS), self)
+        self._predictionTable.setHorizontalHeaderLabels(PREDICTION_HEADERS)
+        self._predictionTable.verticalHeader().setVisible(False)
+        self._predictionTable.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._predictionTable.setSelectionMode(QAbstractItemView.NoSelection)
+        self._predictionTable.setAlternatingRowColors(True)
+        self._predictionTable.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._predictionTable.setFixedHeight(8 * 24 + 30)
+        layout.addWidget(self._predictionTable)
+        return group
+
     # ------------------------------------------------------------- signals
 
     def _connectSignals(self) -> None:
@@ -304,6 +362,7 @@ class CommanderExpPanel(QWidget):
         self._recentBtn.clicked.connect(self._onRecentClicked)
         self._table.itemSelectionChanged.connect(self._onSelectionChanged)
         self._table.doubleClicked.connect(self._onSelectionChanged)
+        self._targetSpin.valueChanged.connect(self._onTargetLevelChanged)
 
     # ---------------------------------------------------------- form state
 
@@ -512,8 +571,152 @@ class CommanderExpPanel(QWidget):
     # --------------------------------------------------------------- data
 
     def refreshData(self) -> None:
-        """刷新历史列表（默认展示最近若干条）。"""
+        """刷新历史列表与升级预测（默认展示最近若干条）。"""
         self._loadRows(limit=COMMANDER_SNAPSHOT_RECENT_LIMIT)
+        self._refreshPrediction()
+
+    # ---------------------------------------------------------- prediction
+
+    def _onTargetLevelChanged(self, _value: int) -> None:
+        """目标等级变化：只重算预测，不写库。"""
+        if self._prediction_loading:
+            return
+        self._refreshPrediction()
+
+    def _refreshPrediction(self) -> None:
+        """
+        刷新「升级预测」：里程碑只取一次最新快照，随后渲染当前目标。
+
+        任何异常都降级为一行提示，不让只读区块影响快照录入。
+        """
+        try:
+            milestones = self._commander_service.listTargetLevelProjections()
+        except DatabaseError as e:
+            self._showPredictionError(f"数据库错误：{e}")
+            return
+        except Exception as e:  # 只读区块兜底，避免整个窗口不可用
+            self._showPredictionError(f"预测不可用：{e}")
+            return
+
+        self._renderMilestones(milestones)
+        self._syncDefaultTarget(milestones)
+
+        try:
+            projection = self._commander_service.getTargetLevelProjection(
+                self._targetSpin.value()
+            )
+        except DatabaseError as e:
+            self._showPredictionError(f"数据库错误：{e}")
+            return
+        except Exception as e:
+            self._showPredictionError(f"预测不可用：{e}")
+            return
+        self._renderProjection(projection)
+
+    def _syncDefaultTarget(self, milestones: List[TargetLevelProjection]) -> None:
+        """
+        首次拿到有效当前等级时，把目标设为「当前+1」并固定下来。
+
+        Args:
+            milestones: 里程碑预测结果（用于读取当前等级）。
+        """
+        if self._prediction_initialized or not milestones:
+            return
+        current_level = milestones[0].current_level
+        if current_level <= 0:
+            return
+
+        self._prediction_loading = True
+        try:
+            self._targetSpin.setValue(min(current_level + 1, COMMANDER_LEVEL_MAX))
+        finally:
+            self._prediction_loading = False
+        self._prediction_initialized = True
+
+    def _renderProjection(self, projection: TargetLevelProjection) -> None:
+        """
+        渲染选中目标的剩余经验、天数与情景。
+
+        Args:
+            projection: 服务层返回的预测结果。
+        """
+        if projection.degraded_reason in ("已满级", "已在该等级", "目标低于当前等级"):
+            self._targetSummaryLabel.setText(projection.degraded_reason)
+            self._targetDetailLabel.setText("")
+            return
+        if projection.remaining_exp is None:
+            self._targetSummaryLabel.setText("-")
+            self._targetDetailLabel.setText(projection.degraded_reason or "暂无法计算")
+            return
+
+        self._targetSummaryLabel.setText(
+            f"还需 {formatExact(projection.remaining_exp)} 经验"
+        )
+        if projection.days_slow is None:
+            self._targetDetailLabel.setText(
+                projection.degraded_reason or "指级效率数据不足，暂无法估算天数"
+            )
+            return
+
+        date_text = f"（{projection.estimated_date}）" if projection.estimated_date else ""
+        parts = [f"约 {projection.days_slow:.1f} 天{date_text}"]
+        if projection.days_long is not None:
+            parts.append(f"近 90 天节奏 {projection.days_long:.1f} 天")
+        if projection.days_fast is not None:
+            parts.append(f"若维持近期节奏 {projection.days_fast:.1f} 天")
+        if projection.days_slow > LONG_HORIZON_DAYS:
+            parts.append(LONG_HORIZON_HINT)
+        self._targetDetailLabel.setText("｜".join(parts))
+
+    def _renderMilestones(self, projections: List[TargetLevelProjection]) -> None:
+        """
+        渲染里程碑表格。
+
+        Args:
+            projections: 里程碑预测结果（按服务层顺序）。
+        """
+        self._predictionTable.setRowCount(0)
+        for projection in projections:
+            row_index = self._predictionTable.rowCount()
+            self._predictionTable.insertRow(row_index)
+            values = [
+                f"{projection.target_level} 级",
+                formatExact(projection.remaining_exp) if projection.remaining_exp is not None else "-",
+                self._formatDaysText(projection.days_slow),
+                self._formatDaysText(projection.days_long),
+                projection.estimated_date or "-",
+            ]
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                if column in (1, 2, 3):
+                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                else:
+                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                self._predictionTable.setItem(row_index, column, item)
+
+    @staticmethod
+    def _formatDaysText(value: Optional[float]) -> str:
+        """
+        把天数格式化为 1 位小数；无值时显示 `-`。
+
+        Args:
+            value: 天数。
+
+        Returns:
+            展示文本。
+        """
+        return "-" if value is None else f"{value:.1f} 天"
+
+    def _showPredictionError(self, message: str) -> None:
+        """
+        预测不可用时的降级展示。
+
+        Args:
+            message: 提示文本。
+        """
+        self._targetSummaryLabel.setText("-")
+        self._targetDetailLabel.setText(message)
+        self._predictionTable.setRowCount(0)
 
     def syncTimeContext(self) -> bool:
         """

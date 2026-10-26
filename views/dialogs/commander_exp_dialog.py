@@ -9,7 +9,9 @@
 from typing import Optional
 
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtWidgets import QDialog, QDialogButtonBox, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import (
+    QDialog, QDialogButtonBox, QFrame, QScrollArea, QVBoxLayout, QWidget,
+)
 
 from services.commander_service import CommanderService
 from views.widgets.commander_exp_panel import CommanderExpPanel
@@ -54,7 +56,15 @@ class CommanderExpDialog(QDialog):
         layout.setSpacing(8)
 
         self._panel = CommanderExpPanel(self._commander_service)
-        layout.addWidget(self._panel, 1)
+        # 面板新增「升级预测」后内容高于默认窗口，用滚动区兜底，
+        # 避免在 768 高度的小屏上把快照表或按钮挤出可视区域。
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setWidget(self._panel)
+        layout.addWidget(scroll, 1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close, self)
         buttons.button(QDialogButtonBox.Close).setText("关闭")
