@@ -15,10 +15,12 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QBrush, QColor
 from PyQt5.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
     QFrame,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QInputDialog,
     QLabel,
     QListWidget,
@@ -26,10 +28,13 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
+from services.backtest_service import BacktestService, DueStatus
 from services.resource_category_service import (
     CategoryEntry,
     CategoryWriteResult,
@@ -50,6 +55,9 @@ DIRECTION_DISPLAY_ORDER = (RESOURCE_DIRECTION_EXPENSE, RESOURCE_DIRECTION_INCOME
 
 # 停用行用灰色弱化，但仍可选中后启用
 INACTIVE_ITEM_COLOR = "#999999"
+
+# 事件方向展示名
+EVENT_DIRECTION_LABELS = {"up": "加速", "down": "放缓"}
 
 
 class CategoryDictionarySection(QGroupBox):
@@ -434,6 +442,223 @@ class CategoryDictionarySection(QGroupBox):
         self.refreshList()
 
 
+class BacktestCalibrationSection(QGroupBox):
+    """
+    回测与校准分组（#35 P3）。
+
+    显示到期状态、待复核事件与最近报告，并提供「立即回测」「标记已复核」。
+    回测只读数据库，不改主值、不改常量；运行结果通过 ``resultReady`` 转给状态栏。
+    """
+
+    resultReady = pyqtSignal(object)
+
+    def __init__(
+        self,
+        backtest_service: Optional[BacktestService] = None,
+        parent: QWidget = None,
+    ):
+        """
+        初始化回测与校准分组。
+
+        Args:
+            backtest_service: 回测服务实例。
+            parent: 父控件。
+        """
+        super().__init__("回测与校准", parent)
+        self._service = backtest_service or BacktestService()
+        self._pending_events: List = []
+        self._initUi()
+        self._connectSignals()
+        self.refresh()
+
+    def _initUi(self) -> None:
+        """初始化用户界面。"""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 16, 12, 12)
+        layout.setSpacing(8)
+
+        hint = QLabel(
+            "到期：距上次回测 ≥90 天或新增 ≥100 条有效快照；"
+            "事件：近期节奏偏离 30 天基线 ±25% 持续 5 天（强事件 ±50% 持续 3 天）。"
+            "回测只读数据库，不改主值与常量。",
+            self,
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #666; font-size: 12px;")
+        layout.addWidget(hint)
+
+        self._statusLabel = QLabel("-", self)
+        self._statusLabel.setWordWrap(True)
+        layout.addWidget(self._statusLabel)
+
+        self._reasonsLabel = QLabel("", self)
+        self._reasonsLabel.setWordWrap(True)
+        layout.addWidget(self._reasonsLabel)
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(8)
+        self._runBtn = QPushButton("立即回测", self)
+        self._runBtn.setToolTip("生成候选口径对比报告与运行记录（约 1 秒）")
+        self._handleBtn = QPushButton("标记已复核", self)
+        self._handleBtn.setToolTip("选中待复核事件后标记，表示已人工确认")
+        self._handleBtn.setEnabled(False)
+        button_row.addWidget(self._runBtn)
+        button_row.addWidget(self._handleBtn)
+        button_row.addStretch()
+        layout.addLayout(button_row)
+
+        self._eventsTable = QTableWidget(0, 5, self)
+        self._eventsTable.setHorizontalHeaderLabels(["方向", "区间", "天数", "峰值", "状态"])
+        self._eventsTable.verticalHeader().setVisible(False)
+        self._eventsTable.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._eventsTable.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._eventsTable.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._eventsTable.setAlternatingRowColors(True)
+        self._eventsTable.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._eventsTable.setMinimumHeight(140)
+        self._eventsTable.setMaximumHeight(180)
+        layout.addWidget(self._eventsTable)
+
+        self._reportLabel = QLabel("", self)
+        self._reportLabel.setWordWrap(True)
+        self._reportLabel.setStyleSheet("color: #666; font-size: 12px;")
+        layout.addWidget(self._reportLabel)
+
+    def _connectSignals(self) -> None:
+        """连接信号与槽。"""
+        self._runBtn.clicked.connect(self._onRunClicked)
+        self._handleBtn.clicked.connect(self._onHandleClicked)
+        self._eventsTable.itemSelectionChanged.connect(self._onSelectionChanged)
+
+    # ------------------------------------------------------------------ 展示
+
+    def refresh(self) -> None:
+        """读取到期状态并刷新展示；任何异常都降级为一行提示。"""
+        try:
+            status = self._service.getDueStatus()
+        except DatabaseError as e:
+            self._showError(f"数据库错误：{e}")
+            return
+        except Exception as e:  # 只读区块兜底，避免设置页整体不可用
+            self._showError(f"回测状态不可用：{e}")
+            return
+        self._renderStatus(status)
+        self._renderEvents(status.pending_events)
+
+    def _renderStatus(self, status: DueStatus) -> None:
+        """
+        渲染状态摘要与建议。
+
+        Args:
+            status: 到期状态。
+        """
+        if status.last_run_at:
+            days = "" if status.days_since is None else f"（{status.days_since} 天前）"
+            self._statusLabel.setText(
+                f"上次回测：{status.last_run_at}{days}｜"
+                f"距上次新增 {status.new_points} 条有效快照"
+            )
+        else:
+            self._statusLabel.setText("尚未运行过回测")
+
+        if status.due:
+            self._reasonsLabel.setText("建议复核：" + "；".join(status.reasons))
+            self._reasonsLabel.setStyleSheet("color: #b26a00;")
+        else:
+            self._reasonsLabel.setText("当前无需复跑")
+            self._reasonsLabel.setStyleSheet("color: #2e7d32;")
+
+        self._reportLabel.setText(
+            f"最近报告：{status.report_path}" if status.report_path else ""
+        )
+
+    def _renderEvents(self, events: List) -> None:
+        """
+        渲染待复核事件表。
+
+        Args:
+            events: 待复核事件列表。
+        """
+        self._pending_events = list(events)
+        self._eventsTable.setRowCount(0)
+        for event in events:
+            row = self._eventsTable.rowCount()
+            self._eventsTable.insertRow(row)
+            values = [
+                EVENT_DIRECTION_LABELS.get(event.direction, event.direction),
+                f"{event.start_date} → {event.end_date}",
+                f"{event.days} 天",
+                f"{event.peak_ratio:.2f}",
+                "待复核",
+            ]
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                if column in (2, 3):
+                    item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                else:
+                    item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                self._eventsTable.setItem(row, column, item)
+        self._handleBtn.setEnabled(False)
+
+    def _showError(self, message: str) -> None:
+        """
+        降级展示。
+
+        Args:
+            message: 提示文本。
+        """
+        self._statusLabel.setText("-")
+        self._reasonsLabel.setText(message)
+        self._reasonsLabel.setStyleSheet("color: #c62828;")
+        self._pending_events = []
+        self._eventsTable.setRowCount(0)
+        self._handleBtn.setEnabled(False)
+        self._reportLabel.setText("")
+
+    # ------------------------------------------------------------------ 操作
+
+    def _onRunClicked(self) -> None:
+        """运行一次回测：同步执行，期间禁用按钮并显示等待光标。"""
+        self._runBtn.setEnabled(False)
+        self._runBtn.setText("正在回测…")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            run = self._service.run()
+        except (DatabaseError, ValidationError) as e:
+            QMessageBox.critical(self, "回测失败", str(e))
+            return
+        except Exception as e:  # 兜底，不让未知异常拖垮设置页
+            QMessageBox.critical(self, "回测失败", f"回测未完成：{e}")
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+            self._runBtn.setEnabled(True)
+            self._runBtn.setText("立即回测")
+
+        self.resultReady.emit(run)
+        self.refresh()
+
+    def _onSelectionChanged(self) -> None:
+        """事件选中状态变化：决定「标记已复核」是否可用。"""
+        row = self._eventsTable.currentRow()
+        self._handleBtn.setEnabled(0 <= row < len(self._pending_events))
+
+    def _onHandleClicked(self) -> None:
+        """把选中事件标记为已复核。"""
+        row = self._eventsTable.currentRow()
+        if row < 0 or row >= len(self._pending_events):
+            return
+        event = self._pending_events[row]
+        try:
+            changed = self._service.markEventHandled(event.direction, event.start_date)
+        except DatabaseError as e:
+            QMessageBox.critical(self, "回测记录", f"保存复核状态失败: {e}")
+            return
+        if not changed:
+            QMessageBox.information(self, "回测记录", "该事件已复核或已不存在")
+        self.refresh()
+
+
 class SettingsPanel(QWidget):
     """
     设置页签容器。
@@ -447,6 +672,7 @@ class SettingsPanel(QWidget):
     def __init__(
         self,
         category_service: Optional[ResourceCategoryService] = None,
+        backtest_service: Optional[BacktestService] = None,
         parent: QWidget = None,
     ):
         """
@@ -454,10 +680,12 @@ class SettingsPanel(QWidget):
 
         Args:
             category_service: 类型字典服务实例。
+            backtest_service: 回测服务实例（只读 + 写本地记录）。
             parent: 父控件。
         """
         super().__init__(parent)
         self._categorySection = CategoryDictionarySection(category_service, self)
+        self._backtestSection = BacktestCalibrationSection(backtest_service, self)
         self._initUi()
         self._connectSignals()
 
@@ -472,6 +700,7 @@ class SettingsPanel(QWidget):
         layout.setContentsMargins(0, 15, 0, 0)
         layout.setSpacing(15)
         layout.addWidget(self._categorySection)
+        layout.addWidget(self._backtestSection)
         layout.addStretch()
 
         scroll = QScrollArea()
@@ -486,14 +715,17 @@ class SettingsPanel(QWidget):
         """连接信号与槽。"""
         self._categorySection.changed.connect(self.categoriesChanged.emit)
         self._categorySection.resultReady.connect(self.resultReady.emit)
+        self._backtestSection.resultReady.connect(self.resultReady.emit)
 
     def syncTimeContext(self) -> None:
         """设置页没有时间上下文；保留接口以配合主窗口的刷新矩阵。"""
 
     def onActivated(self) -> None:
-        """页签激活：刷新类型字典（不重复查其它设置项）。"""
+        """页签激活：刷新类型字典与回测状态。"""
         self._categorySection.onActivated()
+        self._backtestSection.refresh()
 
     def refreshData(self) -> None:
         """刷新界面数据（全局刷新 / Ctrl+R）。"""
         self._categorySection.refreshList()
+        self._backtestSection.refresh()
