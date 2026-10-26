@@ -127,6 +127,27 @@ EXP_EFFICIENCY_LONG_WINDOW_DAYS = 90
 # 「升级预测」里程碑：一次列出常见目标等级（#35）
 COMMANDER_TARGET_LEVEL_MILESTONES = (165, 170, 175, 180, 185, 190, 195, 200)
 
+# ---- 指级效率回测与事件复核（#35 P2）----
+#
+# 口径见 docs/20261026_回测校准与目标等级预测方案.md §3。回测只提醒、只出报告，
+# 不在运行时改主值或阈值。
+
+# 到期：距上次回测 >=90 天，或新增 >=100 条有效快照
+EXP_BACKTEST_INTERVAL_DAYS = 90
+EXP_BACKTEST_SAMPLE_DELTA = 100
+
+# 事件：fast/slow 偏离 ±25% 持续 >=5 个自然日；强事件 ±50% 持续 >=3 天
+EXP_REGIME_UP_RATIO = 1.25
+EXP_REGIME_DOWN_RATIO = 0.75
+EXP_REGIME_MIN_DAYS = 5
+EXP_REGIME_STRONG_UP_RATIO = 1.50
+EXP_REGIME_STRONG_DOWN_RATIO = 0.50
+EXP_REGIME_STRONG_MIN_DAYS = 3
+
+# 同向事件冷却 30 天；只保留最近 90 天内的事件（避免一上线弹出全部历史事件）
+EXP_REGIME_COOLDOWN_DAYS = 30
+EXP_REGIME_EVENT_LOOKBACK_DAYS = 90
+
 # ---- 魔方任务看板 ----
 
 TASK_GROUP_DAILY = "daily"
