@@ -31,6 +31,7 @@ from utils import time_source
 from utils.constants import (
     BASE_DIR, EXP_BACKTEST_INTERVAL_DAYS, EXP_BACKTEST_SAMPLE_DELTA,
     EXP_EFFICIENCY_FAST_CAP_DAYS, EXP_EFFICIENCY_FAST_GAP_DAYS,
+    EXP_EFFICIENCY_LONG_WINDOW_DAYS,
     EXP_EFFICIENCY_TREND_DOWN_RATIO, EXP_EFFICIENCY_TREND_UP_RATIO,
     EXP_EFFICIENCY_WINDOW_DAYS, EXP_REGIME_COOLDOWN_DAYS,
     EXP_REGIME_DOWN_RATIO, EXP_REGIME_EVENT_LOOKBACK_DAYS, EXP_REGIME_MIN_DAYS,
@@ -530,7 +531,9 @@ def _fmtResponse(days: Optional[int]) -> str:
 
 
 def _displayPath(path: str) -> str:
-    """数据库路径：项目内用相对路径，避免报告写死本机绝对路径。"""
+    """数据库/报告路径：项目内用相对路径，避免报告写死本机绝对路径。"""
+    if not os.path.isabs(path):
+        return path.replace("\\", "/")
     absolute = os.path.abspath(path)
     try:
         relative = os.path.relpath(absolute, BASE_DIR)
@@ -539,6 +542,47 @@ def _displayPath(path: str) -> str:
     if relative.startswith(".."):
         return absolute
     return relative.replace("\\", "/")
+
+
+def _currentSummaryLine(points: Sequence[Point]) -> str:
+    """
+    生成报告 §1 的运行摘要（与卡片 tooltip 同口径）。
+
+    Args:
+        points: 升序快照点。
+
+    Returns:
+        形如「slow 11,233/天｜fast 14,124/天（ratio 1.26，加速）｜long 11,073/天｜数据截止 …」。
+    """
+    slow = endpointEstimator(EXP_EFFICIENCY_WINDOW_DAYS)(points)
+    long_rate = endpointEstimator(EXP_EFFICIENCY_LONG_WINDOW_DAYS)(points)
+    block = recentBlock(
+        points, EXP_EFFICIENCY_FAST_GAP_DAYS, EXP_EFFICIENCY_FAST_CAP_DAYS
+    )
+    fast = fastRate(block)
+    ratio = fast / slow if fast is not None and slow else None
+    block_span = _days(block[0][0], block[-1][0]) if len(block) >= 2 else 0.0
+
+    if (
+        ratio is None
+        or len(block) < TREND_MIN_SAMPLES
+        or block_span < TREND_MIN_SPAN_DAYS
+    ):
+        trend = "样本不足"
+    elif ratio >= EXP_EFFICIENCY_TREND_UP_RATIO:
+        trend = "加速"
+    elif ratio <= EXP_EFFICIENCY_TREND_DOWN_RATIO:
+        trend = "放缓"
+    else:
+        trend = "平稳"
+
+    fast_text = "-" if fast is None else _fmtRate(fast)
+    ratio_text = "-" if ratio is None else f"{ratio:.2f}"
+    deadline = points[-1][0].strftime("%Y-%m-%d %H:%M")
+    return (
+        f"slow {_fmtRate(slow)}/天｜fast {fast_text}/天（ratio {ratio_text}，{trend}）"
+        f"｜long {_fmtRate(long_rate)}/天｜数据截止 {deadline}"
+    )
 
 
 def buildReport(
@@ -581,13 +625,13 @@ def buildReport(
     first, last = points[0], points[-1]
     total_span = _days(first[0], last[0])
 
-    add("# 指级效率回测报告（#23 P2）")
+    add("# 指级效率回测报告（#23 P2 / #35 P2）")
     add("")
-    add(f"> 版本 v1.0（工具自动生成，{generated_at.strftime('%Y-%m-%d %H:%M')}）")
+    add(f"> 版本 v1.1（回测服务自动生成，{generated_at.strftime('%Y-%m-%d %H:%M')}）")
     add("> 复现：`python tools/backtest_exp_efficiency.py "
         f"--db {_displayPath(db_path)} --report <本文件>`")
     add("> 口径：`docs/指级效率算法优化方案_20261018.md` §2 / §7；"
-        "工具只读，不改常量、不写库。")
+        "服务只读数据库，不改常量、不写库。")
     add("")
     add("## 0. 结论")
     add("")
@@ -612,6 +656,8 @@ def buildReport(
     add(f"| 时间跨度 | {total_span:.1f} 天 |")
     add(f"| 无法换算（跳过） | {skipped} 条 |")
     add(f"| 异常隔离 | {invalid} 条 |")
+    add("")
+    add(f"> 运行摘要：{_currentSummaryLine(points)}")
     add("")
     add("> walk-forward 口径：origin `i` 只用 `points[:i+1]`；目标取之后首个跨度 "
         f">= H 天的快照，跨度 <= H+{TARGET_TOLERANCE_DAYS} 天才收录。")
@@ -1282,7 +1328,7 @@ class BacktestService:
             days_since=days_since,
             new_points=new_points,
             pending_events=pending,
-            report_path=state.report_path,
+            report_path=_displayPath(state.report_path) if state.report_path else None,
         )
 
     def run(self) -> BacktestRun:
@@ -1309,6 +1355,8 @@ class BacktestService:
         state = self._state_repository.load()
         events = self.mergeEvents(state.events, self.detectRegimeEvents(points))
         report_path = self._state_repository.saveReport(report, generated_at)
+        # 状态文件存相对路径：项目搬家后仍能定位报告；报告内容里的路径也用相对形式
+        display_path = _displayPath(report_path)
 
         new_state = BacktestState(
             last_run_at=generated_at.strftime(STATISTICS_DATETIME_FORMAT),
@@ -1322,7 +1370,7 @@ class BacktestService:
                 "trend_down": EXP_EFFICIENCY_TREND_DOWN_RATIO,
             },
             summary=summary,
-            report_path=report_path,
+            report_path=display_path,
             events=events,
         )
         self._state_repository.save(new_state)
@@ -1335,7 +1383,7 @@ class BacktestService:
             report=report,
             summary=summary,
             events=events,
-            report_path=report_path,
+            report_path=display_path,
         )
 
     def markEventHandled(

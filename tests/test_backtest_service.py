@@ -14,7 +14,7 @@ from unittest.mock import patch
 from models.backtest_model import BacktestEventRecord
 from models.commander_model import CommanderLevelExpModel, CommanderSnapshotModel
 from repositories.backtest_state_repository import BacktestStateRepository
-from services.backtest_service import BacktestService, TrendOrigin
+from services.backtest_service import BacktestService, TrendOrigin, _displayPath
 from services.commander_service import CommanderService
 from utils.exceptions import ValidationError
 
@@ -302,6 +302,27 @@ class TestStateRepository(_BacktestCase):
         with open(path, "r", encoding="utf-8") as handle:
             self.assertEqual(handle.read(), "# 报告\n")
 
+    def testDisplayPathKeepsRelativePath(self):
+        """相对路径原样展示，不因当前工作目录变化而漂移。"""
+        self.assertEqual(_displayPath("data/backtest/x.md"), "data/backtest/x.md")
+
+    def testLegacyAbsoluteReportPathIsNormalized(self):
+        """状态里遗留的绝对路径（项目内）展示为相对路径。"""
+        from utils.constants import BASE_DIR
+
+        absolute = os.path.join(BASE_DIR, "data", "backtest", "x.md")
+        self._writeState(
+            last_run_at=(BASE - timedelta(days=1)).strftime("%Y-%m-%d %H:%M"),
+            points_at_run=5,
+            report_path=absolute,
+        )
+        service = self._service()
+
+        with patch("utils.time_source.today", return_value=BASE.date()):
+            status = service.getDueStatus(points=_dailyPoints(5))
+
+        self.assertEqual(status.report_path, "data/backtest/x.md")
+
 
 class TestRun(_BacktestCase):
     """运行回测测试（T-44 / T-45）。"""
@@ -321,6 +342,9 @@ class TestRun(_BacktestCase):
         self.assertEqual(self._commander_repository.write_calls, 0)
         self.assertEqual(run.points, 3)
         self.assertIn("指级效率回测报告", run.report)
+        self.assertIn("#23 P2 / #35 P2", run.report)
+        self.assertIn("运行摘要", run.report)
+        self.assertIn("slow 10,000/天", run.report)
         self.assertTrue(os.path.exists(run.report_path))
         state = self._repository.load()
         self.assertEqual(state.points_at_run, 3)
