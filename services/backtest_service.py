@@ -930,6 +930,7 @@ class DueStatus:
         days_since: 距上次运行的天数；从未运行时为 None。
         new_points: 距上次运行新增的有效快照条数。
         pending_events: 待复核事件。
+        report_path: 上次报告路径。
     """
 
     due: bool = False
@@ -938,6 +939,7 @@ class DueStatus:
     days_since: Optional[int] = None
     new_points: int = 0
     pending_events: List[BacktestEventRecord] = field(default_factory=list)
+    report_path: Optional[str] = None
 
 
 @dataclass
@@ -964,6 +966,20 @@ class BacktestRun:
     summary: Dict[str, float]
     events: List[BacktestEventRecord] = field(default_factory=list)
     report_path: Optional[str] = None
+
+    def toStatusBarMessage(self) -> str:
+        """
+        生成状态栏提示。
+
+        Returns:
+            中文消息，例如「回测完成：494 条快照，报告已保存」。
+        """
+        message = f"回测完成：{self.points} 条快照"
+        if self.events:
+            message += f"，{len(self.events)} 个事件记录"
+        if self.report_path:
+            message += "，报告已保存"
+        return message
 
 
 def _qualifies(origin: TrendOrigin, direction: str, threshold: float) -> bool:
@@ -1251,10 +1267,11 @@ class BacktestService:
         reasons: List[str] = []
         if state.last_run_at is None:
             reasons.append("尚未运行过回测")
-        elif days_since is not None and days_since >= EXP_BACKTEST_INTERVAL_DAYS:
-            reasons.append(f"距上次回测 {days_since} 天（≥{EXP_BACKTEST_INTERVAL_DAYS}）")
-        if new_points >= EXP_BACKTEST_SAMPLE_DELTA:
-            reasons.append(f"新增 {new_points} 条有效快照（≥{EXP_BACKTEST_SAMPLE_DELTA}）")
+        else:
+            if days_since is not None and days_since >= EXP_BACKTEST_INTERVAL_DAYS:
+                reasons.append(f"距上次回测 {days_since} 天（≥{EXP_BACKTEST_INTERVAL_DAYS}）")
+            if new_points >= EXP_BACKTEST_SAMPLE_DELTA:
+                reasons.append(f"新增 {new_points} 条有效快照（≥{EXP_BACKTEST_SAMPLE_DELTA}）")
         if pending:
             reasons.append(f"{len(pending)} 个待复核事件")
 
@@ -1265,6 +1282,7 @@ class BacktestService:
             days_since=days_since,
             new_points=new_points,
             pending_events=pending,
+            report_path=state.report_path,
         )
 
     def run(self) -> BacktestRun:
