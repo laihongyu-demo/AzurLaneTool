@@ -119,6 +119,14 @@ EXP_EFFICIENCY_TREND_MIN_SPAN_DAYS = 3.0
 EXP_EFFICIENCY_GAP_HINT_DAYS = 7
 EXP_EFFICIENCY_STALE_DAYS = 7
 
+# 长期参考窗口（#35）：目标等级预测里用于“多年目标”的第二口径。
+# 回测显示 90 天窗口在 90/180/365 天前瞻的 MAPE 都低于 30 天窗口
+# （见 docs/20261025_指级效率回测报告.md §2、§3），但它更慢，因此不替代主值。
+EXP_EFFICIENCY_LONG_WINDOW_DAYS = 90
+
+# 「升级预测」里程碑：一次列出常见目标等级（#35）
+COMMANDER_TARGET_LEVEL_MILESTONES = (165, 170, 175, 180, 185, 190, 195, 200)
+
 # ---- 魔方任务看板 ----
 
 TASK_GROUP_DAILY = "daily"

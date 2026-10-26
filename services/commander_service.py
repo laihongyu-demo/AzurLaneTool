@@ -9,20 +9,22 @@
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from models.commander_model import CommanderLevelExpModel, CommanderSnapshotModel
 from repositories.commander_repository import CommanderRepository
 from utils import time_source
 from utils.constants import (
     COMMANDER_LEVEL_MAX, COMMANDER_LEVEL_MIN, COMMANDER_SNAPSHOT_RECENT_LIMIT,
+    COMMANDER_TARGET_LEVEL_MILESTONES,
     EXP_EFFICIENCY_FAST_CAP_DAYS, EXP_EFFICIENCY_FAST_GAP_DAYS,
     EXP_EFFICIENCY_FAST_MIN_SAMPLES, EXP_EFFICIENCY_FAST_MIN_SPAN_DAYS,
-    EXP_EFFICIENCY_GAP_HINT_DAYS, EXP_EFFICIENCY_MIN_SAMPLES,
-    EXP_EFFICIENCY_STALE_DAYS, EXP_EFFICIENCY_TREND_DOWN_RATIO,
-    EXP_EFFICIENCY_TREND_MIN_SAMPLES, EXP_EFFICIENCY_TREND_MIN_SPAN_DAYS,
-    EXP_EFFICIENCY_TREND_UP_RATIO, EXP_EFFICIENCY_UNIT,
-    EXP_EFFICIENCY_WINDOW_DAYS, STATISTICS_DATETIME_FORMAT,
+    EXP_EFFICIENCY_GAP_HINT_DAYS, EXP_EFFICIENCY_LONG_WINDOW_DAYS,
+    EXP_EFFICIENCY_MIN_SAMPLES, EXP_EFFICIENCY_STALE_DAYS,
+    EXP_EFFICIENCY_TREND_DOWN_RATIO, EXP_EFFICIENCY_TREND_MIN_SAMPLES,
+    EXP_EFFICIENCY_TREND_MIN_SPAN_DAYS, EXP_EFFICIENCY_TREND_UP_RATIO,
+    EXP_EFFICIENCY_UNIT, EXP_EFFICIENCY_WINDOW_DAYS, RECORD_DATE_FORMAT,
+    STATISTICS_DATETIME_FORMAT,
 )
 from utils.db_schema import isMissingColumnError, isMissingTableError
 from utils.exceptions import DatabaseError, ValidationError
@@ -133,6 +135,7 @@ class ExpEfficiency:
         gap_days: 慢窗口内相邻有效快照的最大间隔（天）；不足两条时为 None。
         stale_days: 数据截止（最新有效快照）距今天数（向下取整，最小 0）。
         invalid_count: 被隔离的异常快照条数（经验越界 / 绝对经验回退等）。
+        long_rate_per_day: 90 天长期参考日均（#35）；仅用于目标等级预测，不参与主值与 tooltip。
     """
 
     rate_per_day: Optional[int] = None
@@ -154,6 +157,42 @@ class ExpEfficiency:
     gap_days: Optional[float] = None
     stale_days: Optional[int] = None
     invalid_count: int = 0
+    long_rate_per_day: Optional[int] = None
+
+
+@dataclass
+class TargetLevelProjection:
+    """
+    目标等级升级预测结果（#35）。
+
+    口径：`remaining(T) = cum(T-1) − (cum(L-1) + exp)`，`T = L+1` 时与看板
+    「升级还需」完全一致；`T = 200` 使用 `cum(199)`，不读满级 NULL 行。
+
+    Attributes:
+        target_level: 目标等级。
+        current_level: 当前等级（最新快照）；无快照时为 0。
+        current_exp: 当前等级内已累积经验。
+        current_absolute_exp: 当前绝对经验；无法换算时为 None。
+        target_absolute_exp: 到达目标等级的绝对经验（`cum(T-1)`）；缺失时为 None。
+        remaining_exp: 还需经验；无法计算时为 None，已达目标时为 0。
+        days_slow: 按 30 天主值估算的天数。
+        days_long: 按 90 天长期参考估算的天数。
+        days_fast: 按近期节奏估算的天数；仅在趋势明确（加速/放缓）时给值。
+        estimated_date: 预计日期（`today + round(days_slow)`，``yyyy-MM-dd``）。
+        degraded_reason: 不可算或已达成时的说明；正常时为 None。
+    """
+
+    target_level: int
+    current_level: int = 0
+    current_exp: int = 0
+    current_absolute_exp: Optional[int] = None
+    target_absolute_exp: Optional[int] = None
+    remaining_exp: Optional[int] = None
+    days_slow: Optional[float] = None
+    days_long: Optional[float] = None
+    days_fast: Optional[float] = None
+    estimated_date: Optional[str] = None
+    degraded_reason: Optional[str] = None
 
 
 class CommanderService:
@@ -696,23 +735,52 @@ class CommanderService:
             gap_days=self._computeMaxGap(points, start_time, end_time),
             stale_days=stale_days,
             invalid_count=invalid,
+            long_rate_per_day=self._computeWindowRate(
+                points, end_time, EXP_EFFICIENCY_LONG_WINDOW_DAYS
+            ),
         )
+
+    def _computeWindowRate(
+        self,
+        points: List[Tuple[datetime, int]],
+        end_time: datetime,
+        window_days: int,
+    ) -> Optional[int]:
+        """
+        用指定窗口的端点差计算日均（不改主值，仅作参考口径）。
+
+        Args:
+            points: 按时间升序的有效快照点（至少 2 条）。
+            end_time: 右端点（最新有效快照）。
+            window_days: 窗口天数。
+
+        Returns:
+            日均经验；跨度不足一天时返回 None。
+        """
+        start_time, start_absolute = self._findWindowStart(points, end_time, window_days)
+        span_days = (end_time - start_time).total_seconds() / 86400
+        if span_days <= 0:
+            return None
+        return int(round((points[-1][1] - start_absolute) / span_days))
 
     @staticmethod
     def _findWindowStart(
-        points: List[Tuple[datetime, int]], end_time: datetime
+        points: List[Tuple[datetime, int]],
+        end_time: datetime,
+        window_days: int = EXP_EFFICIENCY_WINDOW_DAYS,
     ) -> Tuple[datetime, int]:
         """
-        取慢窗口起点：窗口边界之前最近的一条有效快照。
+        取指定窗口的起点：窗口边界之前最近的一条有效快照。
 
         Args:
             points: 按时间升序的有效快照点。
             end_time: 右端点（最新有效快照）。
+            window_days: 窗口天数，默认慢窗口。
 
         Returns:
             起点 (时刻, 绝对经验)；全部历史都在窗口内时返回最早一条。
         """
-        cutoff = end_time - timedelta(days=EXP_EFFICIENCY_WINDOW_DAYS)
+        cutoff = end_time - timedelta(days=window_days)
         start: Optional[Tuple[datetime, int]] = None
         for moment, absolute in points:
             if moment <= cutoff:
@@ -1096,6 +1164,158 @@ class CommanderService:
         latest_moment = datetime.strptime(latest.statistics_date, STATISTICS_DATETIME_FORMAT)
         end_moment = datetime.strptime(efficiency.end_time, STATISTICS_DATETIME_FORMAT)
         return latest_moment > end_moment
+
+    # ----------------------------------------------------- 目标等级预测（#35）
+
+    def getTargetLevelProjection(self, target_level: int) -> TargetLevelProjection:
+        """
+        计算到达指定目标等级还需的经验与预计时间（#35）。
+
+        口径：`remaining(T) = cum(T-1) − absolute(当前)`；主值仍用 30 天日均，
+        另给 90 天长期参考；趋势明确时追加近期情景。不输出区间、不写库。
+
+        Args:
+            target_level: 目标等级（1～200）。
+
+        Returns:
+            预测结果；已达成 / 基准缺失 / 速率缺失时在 `degraded_reason` 说明。
+
+        Raises:
+            ValidationError: 目标等级越界时抛出。
+        """
+        self._validateTargetLevel(target_level)
+        return self._buildProjection(self.getLatestSnapshot(), target_level)
+
+    def listTargetLevelProjections(
+        self, targets: Optional[Sequence[int]] = None
+    ) -> List[TargetLevelProjection]:
+        """
+        批量计算里程碑目标等级（默认 `COMMANDER_TARGET_LEVEL_MILESTONES`）。
+
+        最新快照只取一次，避免 8 个里程碑各查一遍库。
+
+        Args:
+            targets: 目标等级序列；None 时取默认里程碑。
+
+        Returns:
+            与输入顺序一致的预测结果列表。
+
+        Raises:
+            ValidationError: 任一目标等级越界时抛出。
+        """
+        if targets is None:
+            targets = COMMANDER_TARGET_LEVEL_MILESTONES
+        latest = self.getLatestSnapshot()
+        projections: List[TargetLevelProjection] = []
+        for target in targets:
+            self._validateTargetLevel(target)
+            projections.append(self._buildProjection(latest, target))
+        return projections
+
+    @staticmethod
+    def _validateTargetLevel(target_level: int) -> None:
+        """
+        校验目标等级范围。
+
+        Args:
+            target_level: 目标等级。
+
+        Raises:
+            ValidationError: 越界时抛出。
+        """
+        if target_level < COMMANDER_LEVEL_MIN or target_level > COMMANDER_LEVEL_MAX:
+            raise ValidationError(
+                f"目标等级必须在 {COMMANDER_LEVEL_MIN}～{COMMANDER_LEVEL_MAX} 之间"
+            )
+
+    def _buildProjection(
+        self,
+        latest: Optional[CommanderSnapshotModel],
+        target_level: int,
+    ) -> TargetLevelProjection:
+        """
+        基于已取到的最新快照构造预测（不查快照表）。
+
+        Args:
+            latest: 最新快照；None 表示无数据。
+            target_level: 已校验的目标等级。
+
+        Returns:
+            预测结果。
+        """
+        if latest is None:
+            return TargetLevelProjection(
+                target_level=target_level,
+                degraded_reason="暂无指挥官快照，请先录入等级",
+            )
+
+        level = latest.commander_level
+        absolute = self.getAbsoluteExp(level, latest.commander_exp)
+        projection = TargetLevelProjection(
+            target_level=target_level,
+            current_level=level,
+            current_exp=latest.commander_exp,
+            current_absolute_exp=absolute,
+        )
+
+        if level >= COMMANDER_LEVEL_MAX:
+            projection.remaining_exp = 0
+            projection.degraded_reason = "已满级"
+            return projection
+        if target_level < level:
+            projection.remaining_exp = 0
+            projection.degraded_reason = "目标低于当前等级"
+            return projection
+        if target_level == level:
+            projection.remaining_exp = 0
+            projection.degraded_reason = "已在该等级"
+            return projection
+        if absolute is None:
+            projection.degraded_reason = "缺少当前等级的基准数据"
+            return projection
+
+        requirement = self.getLevelRequirement(target_level - 1)
+        if requirement is None or requirement.cumulative_exp is None:
+            projection.degraded_reason = "缺少该等级的基准数据"
+            return projection
+
+        projection.target_absolute_exp = int(requirement.cumulative_exp)
+        projection.remaining_exp = max(0, projection.target_absolute_exp - absolute)
+        self._fillProjectionDurations(projection)
+        return projection
+
+    def _fillProjectionDurations(self, projection: TargetLevelProjection) -> None:
+        """
+        填充预测结果的天数与预计日期（就地修改）。
+
+        仅在 `remaining_exp` 已算出的前提下调用；速率不足时只写降级原因，
+        不伪造天数或日期。
+
+        Args:
+            projection: 待填充的预测结果。
+        """
+        if projection.remaining_exp is None:
+            return
+
+        efficiency = self.getExpEfficiency()
+        rate = efficiency.rate_per_day
+        if not rate or rate <= 0:
+            projection.degraded_reason = "指级效率数据不足，暂无法估算天数"
+            return
+
+        projection.days_slow = projection.remaining_exp / rate
+        projection.estimated_date = (
+            time_source.today() + timedelta(days=round(projection.days_slow))
+        ).strftime(RECORD_DATE_FORMAT)
+
+        long_rate = efficiency.long_rate_per_day
+        if long_rate and long_rate > 0:
+            projection.days_long = projection.remaining_exp / long_rate
+
+        if efficiency.trend in (TREND_ACCELERATING, TREND_DECELERATING):
+            fast = efficiency.fast_rate_per_day
+            if fast and fast > 0:
+                projection.days_fast = projection.remaining_exp / fast
 
     def _normalize(self, snapshot: CommanderSnapshotModel) -> CommanderSnapshotModel:
         """
