@@ -328,6 +328,26 @@ class TestStatisticsCardWiring(unittest.TestCase):
         self.assertFalse(panel._redGemCard.clickable())
         self.assertTrue(panel._commanderLevelCard.clickable())
 
+    def testRemainingLevelingCardIsClickable(self):
+        """剩余练级数量卡可点击，提示文案说明会打开科技属性看板。"""
+        panel = self._buildPanel()
+
+        self.assertTrue(panel._remainingLevelingCard.clickable())
+        self.assertIn("点击查看", panel._remainingLevelingCard.toolTip())
+
+    def testRemainingLevelingCardOpensBuffDialog(self):
+        """点击剩余练级数量卡打开科技属性窗口，并复用同一实例。"""
+        panel = self._buildPanel()
+
+        with patch("views.widgets.statistics_panel.CodexBuffDialog") as dialog_cls:
+            panel._onRemainingLevelingClicked()
+            panel._onRemainingLevelingClicked()
+
+        dialog_cls.assert_called_once()
+        self.assertEqual(dialog_cls.return_value.show.call_count, 2)
+        self.assertEqual(dialog_cls.return_value.raise_.call_count, 2)
+        self.assertEqual(dialog_cls.return_value.activateWindow.call_count, 2)
+
     def testEmptyDataShowsPlaceholders(self):
         """无数据时三张卡显示 -，不抛异常，且不显示角标。"""
         panel = self._buildPanel()

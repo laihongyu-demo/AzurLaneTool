@@ -898,6 +898,26 @@ class CodexBuffRepository(BaseRepository[CodexBuffModel]):
         except sqlite3.Error as e:
             raise DatabaseError(f"查询Buff列表失败: {e}")
 
+    def getProgressByBuffTyp(self) -> List[Dict]:
+        """
+        按 Buff 属性类型（buff_typ）汇总科技属性的 buff_value。
+
+        返回每个 buff_typ 的总属性值与已解锁属性值；
+        具体口径见 ``sql/GetCodexBuffProgressByBuffTyp.sql``。
+        缺少表 / 列时由 Service 判断并降级，本方法只负责执行查询。
+
+        Returns:
+            聚合结果字典列表，字段包括 ``buff_typ``、``total_value``、
+            ``unlocked_value``。
+        """
+        sql = loadSqlFile("GetCodexBuffProgressByBuffTyp.sql")
+        try:
+            with self._getConnection() as conn:
+                cursor = conn.execute(sql)
+                return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.Error as e:
+            raise DatabaseError(f"查询科技属性汇总值失败: {e}")
+
     def findById(self, record_id: int) -> Optional[CodexBuffModel]:
         """根据ID查询Buff记录。"""
         sql = f"""

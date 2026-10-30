@@ -4,11 +4,40 @@
 提供数据统计相关的业务逻辑处理。
 """
 
+from dataclasses import dataclass
 from typing import Dict, Any, Optional, List
 
-from repositories.codex_repository import CodexGroupRepository, CodexTpRepository
+from repositories.codex_repository import (
+    CodexBuffRepository,
+    CodexGroupRepository,
+    CodexTpRepository,
+)
 from utils import codex_options as options
+from utils.db_schema import isMissingColumnError, isMissingTableError
 from utils.exceptions import DatabaseError
+
+
+@dataclass(frozen=True)
+class CodexBuffValueSummary:
+    """
+    单个 Buff 属性类型（buff_typ）的科技属性汇总值。
+
+    Attributes:
+        buff_typ: Buff 属性类型（耐久 / 炮击 / …）。
+        total_value: 该属性下所有记录的 buff_value 合计。
+        unlocked_value: 已解锁记录（buff_unlock='Y'）的 buff_value 合计。
+    """
+
+    buff_typ: str
+    total_value: int = 0
+    unlocked_value: int = 0
+
+    @property
+    def completion_rate(self) -> float:
+        """按 buff_value 汇总值计算的完成率（0–100）。"""
+        if self.total_value <= 0:
+            return 0.0
+        return self.unlocked_value / self.total_value * 100
 
 
 class StatisticsService:
@@ -21,7 +50,8 @@ class StatisticsService:
     def __init__(
         self,
         group_repository: Optional[CodexGroupRepository] = None,
-        tp_repository: Optional[CodexTpRepository] = None
+        tp_repository: Optional[CodexTpRepository] = None,
+        buff_repository: Optional[CodexBuffRepository] = None
     ):
         """
         初始化统计服务。
@@ -29,9 +59,11 @@ class StatisticsService:
         Args:
             group_repository: 舰娘图鉴组数据访问实例。
             tp_repository: TP数据访问实例。
+            buff_repository: 科技属性数据访问实例。
         """
         self._group_repository = group_repository or CodexGroupRepository()
         self._tp_repository = tp_repository or CodexTpRepository()
+        self._buff_repository = buff_repository or CodexBuffRepository()
 
     def getUnlockStatistics(self) -> Dict[str, Any]:
         """
@@ -88,6 +120,40 @@ class StatisticsService:
             "unlocked_tp": unlocked_tp,
             "completion_rate": completion_rate
         }
+
+    def getBuffStatisticsByBuffTyp(self) -> List[CodexBuffValueSummary]:
+        """
+        获取科技属性按 buff_typ 汇总的 buff_value。
+
+        按 ``options.BUFF_TYPS`` 白名单顺序补齐 9 项；某属性没有记录时返回全 0，
+        保证窗口行数稳定。缺表 / 缺列时降级为 9 项全 0，不把数据库异常抛到界面。
+
+        Returns:
+            ``CodexBuffValueSummary`` 列表，顺序与 ``BUFF_TYPS`` 一致。
+        """
+        try:
+            rows = self._buff_repository.getProgressByBuffTyp()
+        except DatabaseError as e:
+            if isMissingTableError(e) or isMissingColumnError(e):
+                rows = []
+            else:
+                raise
+
+        rows_by_buff = {
+            str(row.get("buff_typ") or ""): row
+            for row in rows
+        }
+        result: List[CodexBuffValueSummary] = []
+        for buff_typ in options.BUFF_TYPS:
+            row = rows_by_buff.get(buff_typ, {})
+            result.append(
+                CodexBuffValueSummary(
+                    buff_typ=buff_typ,
+                    total_value=int(row.get("total_value") or 0),
+                    unlocked_value=int(row.get("unlocked_value") or 0),
+                )
+            )
+        return result
 
     def getBulinRequirements(self) -> Dict[str, Any]:
         """

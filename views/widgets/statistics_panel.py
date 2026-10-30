@@ -21,6 +21,7 @@ from utils import time_source
 from utils.constants import RESOURCE_TYPE_CUBE, RESOURCE_TYPE_RED_GEM
 from utils.exceptions import DatabaseError
 from utils.unit_formatter import formatExact
+from views.dialogs.codex_buff_dialog import CodexBuffDialog
 from views.dialogs.commander_exp_dialog import CommanderExpDialog
 from views.widgets.stat_card import StatCard
 
@@ -62,6 +63,7 @@ class StatisticsPanel(QWidget):
         self._commander_service = commander_service or CommanderService()
         self._resource_service = resource_service or ResourceService()
         self._commanderDialog = None
+        self._buffDialog = None
         self._last_seen_date = time_source.today()
         self._initUi()
         self._connectSignals()
@@ -136,12 +138,16 @@ class StatisticsPanel(QWidget):
         self._totalTpCard = StatCard("科技点总值", "0")  # 精确数值：固定千分符
         self._unlockedTpCard = StatCard("当前科技点", "0")  # 精确数值：固定千分符
         self._tpRateCard = StatCard("科技点完成率", "0%")
-        self._remainingLevelingCard = StatCard("剩余练级数量", "0")  # 格式："需消耗心智单元（还需练级）"
+        # 格式："需消耗心智单元（还需练级）"
+        self._remainingLevelingCard = StatCard(
+            "剩余练级数量", "0", clickable=True
+        )
         self._remainingLevelingCard.setToolTip(
             "主值：未满 120 级、仍需消耗心智单元的舰娘数"
             "（认知觉醒四阶已不需材料，不计入）\n"
             "括弧：还需要练级的舰娘数"
-            "（认知觉醒一阶经验已满足 120，不计入）"
+            "（认知觉醒一阶经验已满足 120，不计入）\n"
+            "点击查看各增益舰种的科技属性完成情况"
         )
 
         tp_stats_layout.addWidget(self._totalTpCard)
@@ -197,6 +203,7 @@ class StatisticsPanel(QWidget):
         self._refreshBtn.clicked.connect(self._onRefreshClicked)
         self._mentalCalcBtn.clicked.connect(self._onMentalCalcClicked)
         self._commanderLevelCard.clicked.connect(self._onCommanderLevelClicked)
+        self._remainingLevelingCard.clicked.connect(self._onRemainingLevelingClicked)
 
     def _onRefreshClicked(self) -> None:
         """刷新按钮点击事件处理。"""
@@ -247,6 +254,19 @@ class StatisticsPanel(QWidget):
         self._commanderDialog.show()
         self._commanderDialog.raise_()
         self._commanderDialog.activateWindow()
+
+    def _onRemainingLevelingClicked(self) -> None:
+        """
+        「剩余练级数量」卡片点击事件处理：打开科技属性看板窗口。
+
+        窗口非模态，懒创建；只读聚合 codex_buff，不写数据库。
+        """
+        if self._buffDialog is None:
+            self._buffDialog = CodexBuffDialog(self._statistics_service, self)
+
+        self._buffDialog.show()
+        self._buffDialog.raise_()
+        self._buffDialog.activateWindow()
 
     def _onCommanderDialogDataChanged(self) -> None:
         """指级经验窗口内数据变化：刷新卡片并通知外部。"""
