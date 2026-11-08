@@ -21,7 +21,7 @@ from services.commander_service import (
 from utils import time_source
 from utils.constants import (
     COMMANDER_LEVEL_MAX, COMMANDER_LEVEL_MIN, COMMANDER_SNAPSHOT_RECENT_LIMIT,
-    QT_DATE_DISPLAY_FORMAT, QT_DATETIME_DISPLAY_FORMAT,
+    EXP_EFFICIENCY_FAST_CAP_DAYS, QT_DATE_DISPLAY_FORMAT, QT_DATETIME_DISPLAY_FORMAT,
 )
 from utils.db_schema import isMissingTableError
 from utils.exceptions import DatabaseError, ValidationError
@@ -663,7 +663,9 @@ class CommanderExpPanel(QWidget):
         if projection.days_long is not None:
             parts.append(f"近 90 天节奏 {projection.days_long:.1f} 天")
         if projection.days_fast is not None:
-            parts.append(f"若维持近期节奏 {projection.days_fast:.1f} 天")
+            parts.append(
+                f"若延续近 {EXP_EFFICIENCY_FAST_CAP_DAYS} 天平均，{projection.days_fast:.1f} 天"
+            )
         if projection.days_slow > LONG_HORIZON_DAYS:
             parts.append(LONG_HORIZON_HINT)
         self._targetDetailLabel.setText("｜".join(parts))

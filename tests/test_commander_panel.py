@@ -431,7 +431,7 @@ class TestStatisticsCardWiring(unittest.TestCase):
 
     def testExpEfficiencyCardHasNoBadge(self):
         """T-27：指级效率卡只换文本与提示，不加角标（#23 决策：趋势只放 tooltip）。"""
-        tooltip = "近 30 天日均 11,336/天\n近期节奏 14,000/天｜趋势 加速 +24%"
+        tooltip = "近 30 天日均 11,336/天\n近 14 天平均 14,000/天｜趋势 加速 +24%"
         panel = self._buildPanel(
             commander_service=_StubCommanderService(
                 "163（77,057/354,350）", "指挥官tip",

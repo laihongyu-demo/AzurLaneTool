@@ -128,7 +128,7 @@ class _PredictionPanelCase(unittest.TestCase):
         self.assertIn("626.4 天", detail)
         self.assertIn("2028-07-13", detail)
         self.assertIn("近 90 天节奏 635.4 天", detail)
-        self.assertIn("若维持近期节奏 498.1 天", detail)
+        self.assertIn("若延续近 14 天平均，498.1 天", detail)
         self.assertIn("长期估算", detail)
 
     def testChangingTargetOnlyRecomputes(self):

@@ -533,6 +533,9 @@ class CommanderService:
         scenario = self.getUpgradeScenario(overview.remaining_exp)
         if scenario:
             parts.append(scenario)
+        efficiency = self.getExpEfficiency()
+        if efficiency.rate_per_day:
+            parts.append(self._formatWindowNote(efficiency))
         badge = self._buildUpgradeBadge(latest.commander_level, overview.remaining_exp)
         if (
             not badge.text
@@ -578,16 +581,16 @@ class CommanderService:
 
     def getUpgradeScenario(self, remaining_exp: Optional[int]) -> str:
         """
-        生成「若维持近期节奏」的升级情景文案（#23 §6.3）。
+        生成「若延续近 14 天平均」的升级情景文案（#23 §6.3）。
 
-        只在趋势明确（加速 / 放缓）时给出：近期节奏有偏，只作方向与情景参考，
+        只在趋势明确（加速 / 放缓）时给出：14 天平均有偏，只作方向与情景参考，
         不写成区间、不参与角标主值。升级天数主值仍由标题角标承载。
 
         Args:
             remaining_exp: 本级还差多少经验；None 或 <=0 时不输出情景。
 
         Returns:
-            形如「若维持近期节奏 16.3 天后升级」；不适用时返回空串。
+            形如「若延续近 14 天平均，16.3 天后升级」；不适用时返回空串。
         """
         if not remaining_exp or remaining_exp <= 0:
             return ""
@@ -597,7 +600,30 @@ class CommanderService:
         fast = efficiency.fast_rate_per_day
         if not fast or fast <= 0:
             return ""
-        return f"若维持近期节奏 {remaining_exp / fast:.1f} 天后升级"
+        window = EXP_EFFICIENCY_FAST_CAP_DAYS
+        return f"若延续近 {window} 天平均，{remaining_exp / fast:.1f} 天后升级"
+
+    @staticmethod
+    def _formatWindowNote(efficiency: ExpEfficiency) -> str:
+        """
+        生成「估算口径」说明，暴露 30 天窗口被缺口拉长的实际情况。
+
+        Args:
+            efficiency: 指级效率结果。
+
+        Returns:
+            形如「口径：近 30 天日均，窗口实际跨 43.9 天（含 15.6 天缺口）」。
+        """
+        base = f"口径：近 {EXP_EFFICIENCY_WINDOW_DAYS} 天日均"
+        span = efficiency.span_days
+        if span is None:
+            return base
+        gap = efficiency.gap_days
+        if gap is not None and gap >= EXP_EFFICIENCY_GAP_HINT_DAYS:
+            return f"{base}，窗口实际跨 {span:.1f} 天（含 {gap:.1f} 天缺口）"
+        if span > EXP_EFFICIENCY_WINDOW_DAYS + 1:
+            return f"{base}，窗口实际跨 {span:.1f} 天"
+        return base
 
     # ----------------------------------------------------- 指级效率（#16）
 
@@ -1074,19 +1100,20 @@ class CommanderService:
 
     def _buildFastTooltipPart(self, efficiency: ExpEfficiency) -> str:
         """
-        生成 tooltip 第 2 段：近期节奏与趋势。
+        生成 tooltip 第 2 段：近 14 天平均与趋势。
 
         Args:
             efficiency: 指级效率结果。
 
         Returns:
-            单行提示；近期样本不足时说明原因。
+            单行提示；近 14 天样本不足时说明原因。
         """
+        window = EXP_EFFICIENCY_FAST_CAP_DAYS
         if efficiency.fast_rate_per_day is None:
-            return "近期样本不足"
+            return f"近 {window} 天样本不足"
 
         parts = [
-            f"近期节奏 {formatExact(efficiency.fast_rate_per_day)}{EXP_EFFICIENCY_UNIT}",
+            f"近 {window} 天平均 {formatExact(efficiency.fast_rate_per_day)}{EXP_EFFICIENCY_UNIT}",
             f"{self._formatTooltipMoment(efficiency.fast_start_time)} → "
             f"{self._formatTooltipMoment(efficiency.fast_end_time)}"
             f"（{efficiency.fast_span_days:.1f} 天，{efficiency.fast_sample_count} 条快照）",
