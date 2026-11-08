@@ -1211,13 +1211,15 @@ class BacktestService:
             事件记录。
         """
         first, last = run[0], run[-1]
+        # 取偏离 30 天基线最远的一天：变快取最大 ratio、变慢取最小 ratio
+        strongest = max(run, key=lambda origin: abs((origin.ratio or 1.0) - 1.0))
         return BacktestEventRecord(
             direction=direction,
             strength=strength,
             start_date=first.moment.strftime(RECORD_DATE_FORMAT),
             end_date=last.moment.strftime(RECORD_DATE_FORMAT),
             days=len(run),
-            peak_ratio=round(max(origin.ratio or 1.0 for origin in run), 4),
+            peak_ratio=round(strongest.ratio or 1.0, 4),
             slow_start=int(round(first.slow)),
             slow_end=int(round(last.slow)),
             sample_count=len(run),

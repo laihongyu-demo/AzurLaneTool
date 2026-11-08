@@ -131,6 +131,7 @@ class _SectionCase(unittest.TestCase):
 
         table = section._eventsTable
         self.assertEqual(table.rowCount(), 1)
+        self.assertEqual(table.horizontalHeaderItem(3).text(), "最大偏离")
         self.assertEqual(table.item(0, 0).text(), "变慢")
         self.assertEqual(table.item(0, 1).text(), "2026-09-01 → 2026-09-08")
         self.assertEqual(table.item(0, 2).text(), "8 天")

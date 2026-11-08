@@ -511,7 +511,10 @@ class BacktestCalibrationSection(QGroupBox):
         layout.addLayout(button_row)
 
         self._eventsTable = QTableWidget(0, 5, self)
-        self._eventsTable.setHorizontalHeaderLabels(["变化", "时间", "持续", "幅度", "状态"])
+        self._eventsTable.setHorizontalHeaderLabels(["变化", "时间", "持续", "最大偏离", "状态"])
+        self._eventsTable.setToolTip(
+            "最大偏离：事件期间偏离最厉害的一天，最近两周速度比最近一个月平均快/慢多少"
+        )
         self._eventsTable.verticalHeader().setVisible(False)
         self._eventsTable.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._eventsTable.setSelectionBehavior(QAbstractItemView.SelectRows)
