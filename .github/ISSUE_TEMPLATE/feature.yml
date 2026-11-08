@@ -1,0 +1,84 @@
+name: "功能 / 改进"
+description: "提出新功能、现有行为改进或业务口径调整。"
+title: "[功能] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        先搜索是否已有同题 issue；能说清「解决什么问题」比「加什么控件」更重要。
+        涉及口径时，请写明数据来源、时间范围、缺失值处理与验收方式。
+
+  - type: textarea
+    id: background
+    attributes:
+      label: "背景 / 目标"
+      description: "为什么要做？解决什么问题？成功的判据是什么？"
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: "现状与证据"
+      description: "当前代码/文档/数据是什么状态；给文件:行号、SQL、查询结果或截图。"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "方案 / 口径"
+      description: "推荐方案、备选方案、数据来源、时间口径、缺失值处理、影响范围。"
+      placeholder: |
+        推荐方案：
+        备选方案：
+        数据来源/口径：
+        不做/边界：
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: "影响面"
+      description: "可多选；用于确定需要补哪些测试与文档。"
+      options:
+        - label: "views/（界面/交互）"
+        - label: "services/（业务/校验/计算）"
+        - label: "repositories/ 或 sql/（数据访问/迁移）"
+        - label: "models/ 或 utils/（模型/工具）"
+        - label: "docs/（规范/方案/报告）"
+        - label: "build/依赖/README"
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: "验收标准"
+      description: "可观察、可测试的条目；不要写“体验更好”这类无法验收的话。"
+      value: |
+        - [ ] ...
+        - [ ] 全量测试通过
+        - [ ] 相关文档已同步
+    validations:
+      required: true
+
+  - type: textarea
+    id: open_questions
+    attributes:
+      label: "待确认"
+      description: "需要用户拍板的问题；每项给可选项与默认建议。没有就写“无”。"
+
+  - type: input
+    id: related
+    attributes:
+      label: "关联"
+      description: "相关 issue / PR / docs，例如 #14、docs/资源看板日环比角标方案_20261018.md。"
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: "提交前检查"
+      options:
+        - label: "我已搜索过同题 issue"
+          required: true

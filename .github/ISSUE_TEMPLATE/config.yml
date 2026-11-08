@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: "开发规范（先读）"
+    url: "https://github.com/laihongyu-demo/AzurLaneTool/blob/develop/设计与开发规范文档.md"
+    about: "Issue、标签、分支、提交与文档规范都在这里。"
+  - name: "搜索现有 issue"
+    url: "https://github.com/laihongyu-demo/AzurLaneTool/issues"
+    about: "提交前先搜索是否已有同题 issue，避免重复。"

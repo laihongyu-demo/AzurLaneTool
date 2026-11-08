@@ -1,0 +1,88 @@
+name: "数据问题 / 迁移"
+description: "报告数据重复、错位、缺失、口径不一致，或提出数据迁移/修正方案。"
+title: "[数据] "
+labels: ["data-quality"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        数据问题优先给可复现的只读查询与数量证据；涉及真实库修正时，必须写清备份、临时库演练与回滚方式。
+        不要贴整库、个人数据或未脱敏日志。
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: "数据问题 / 范围"
+      description: "涉及哪些表、字段、时间范围、资源类型或业务口径？"
+      placeholder: |
+        表：
+        字段：
+        时间范围：
+        影响口径：
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: "证据"
+      description: "只读 SQL、查询结果、行数、样本（脱敏）、截图或文档链接。"
+      placeholder: |
+        ```sql
+        SELECT ...
+        ```
+        预期行数/实际行数：
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: "影响"
+      description: "会影响哪些页面/统计/写入路径？是否已经影响用户数据？"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: "修正 / 迁移方案"
+      description: "DDL、回填、脚本、执行顺序、幂等性、备份、回滚、影响行数。"
+      placeholder: |
+        备份：
+        DDL/脚本：
+        执行顺序：
+        幂等/重跑：
+        回滚：
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: "验证与验收"
+      description: "修正前后对照、校验 SQL、抽样、业务口径抽查、测试与报告。"
+      value: |
+        - [ ] 临时库演练通过
+        - [ ] 备份路径已记录
+        - [ ] 校验 SQL 前后对照符合预期
+        - [ ] 全量测试通过
+        - [ ] 迁移/修正报告已写入 docs/
+    validations:
+      required: true
+
+  - type: input
+    id: related
+    attributes:
+      label: "关联"
+      description: "相关 issue / PR / docs，例如 #10、docs/数据修正报告_20261012.md。"
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: "提交前检查"
+      options:
+        - label: "我已搜索过同题 issue"
+          required: true
+        - label: "我已确认问题不是单纯的界面刷新/缓存"
+          required: true

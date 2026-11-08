@@ -1,0 +1,6 @@
+[tool.black]
+line-length = 120
+target-version = ["py38"]
+# Keep existing single-quote style to avoid a repository-wide quote churn.
+skip-string-normalization = true
+extend-exclude = '/(\.git|\.dsh|dsh-plugins|build|dist|venv|\.venv)/'

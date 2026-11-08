@@ -14,6 +14,8 @@ from PyQt5.QtCore import Qt, pyqtSignal
 
 from models.codex_model import CodexGroupModel
 from services.codex_unlock_service import CodexUnlockService, UnlockResult
+from services.codex_ship_create_service import CodexShipCreateService, ShipCreateResult
+from views.dialogs.codex_ship_create_dialog import CodexShipCreateDialog
 from views.widgets.searchable_combo_box import SearchableComboBox
 from utils.exceptions import DatabaseError, ValidationError
 
@@ -27,17 +29,25 @@ class CodexUnlockPanel(QWidget):
 
     dataRefreshed = pyqtSignal()
     unlockResult = pyqtSignal(object)
+    shipCreateResult = pyqtSignal(object)
 
-    def __init__(self, unlock_service: Optional[CodexUnlockService] = None, parent: QWidget = None):
+    def __init__(
+        self,
+        unlock_service: Optional[CodexUnlockService] = None,
+        create_service: Optional[CodexShipCreateService] = None,
+        parent: QWidget = None
+    ):
         """
         初始化解锁面板。
 
         Args:
             unlock_service: 解锁服务实例。
+            create_service: 舰娘新增服务实例。
             parent: 父控件。
         """
         super().__init__(parent)
         self._unlock_service = unlock_service or CodexUnlockService()
+        self._create_service = create_service or CodexShipCreateService()
         self._locked_ships: list = []
         self._initUi()
         self._connectSignals()
@@ -76,6 +86,10 @@ class CodexUnlockPanel(QWidget):
         unlock_layout.addLayout(info_layout)
 
         button_layout = QHBoxLayout()
+        self._addShipBtn = QPushButton("新增舰娘")
+        self._addShipBtn.setMinimumWidth(100)
+        self._addShipBtn.setMinimumHeight(35)
+        button_layout.addWidget(self._addShipBtn)
         button_layout.addStretch()
         self._unlockBtn = QPushButton("解锁")
         self._unlockBtn.setMinimumWidth(100)
@@ -94,6 +108,7 @@ class CodexUnlockPanel(QWidget):
     def _connectSignals(self) -> None:
         """连接信号与槽。"""
         self._shipComboBox.currentIndexChanged.connect(self._onShipSelected)
+        self._addShipBtn.clicked.connect(self._onAddShipClicked)
         self._unlockBtn.clicked.connect(self._onUnlockClicked)
         self._refreshBtn.clicked.connect(self._onRefreshClicked)
 
@@ -117,6 +132,23 @@ class CodexUnlockPanel(QWidget):
         self._shipTypeLabel.setText("-")
         self._shipRarityLabel.setText("-")
         self._shipCampLabel.setText("-")
+
+    def _onAddShipClicked(self) -> None:
+        """新增舰娘按钮点击事件处理。"""
+        dialog = CodexShipCreateDialog(self._create_service, self)
+        dialog.shipCreated.connect(self._onShipCreated)
+        dialog.exec_()
+
+    def _onShipCreated(self, result: ShipCreateResult) -> None:
+        """
+        舰娘新增成功事件处理。
+
+        Args:
+            result: 新增结果对象。
+        """
+        self.shipCreateResult.emit(result)
+        self.refreshData()
+        self.dataRefreshed.emit()
 
     def _onUnlockClicked(self) -> None:
         """解锁按钮点击事件处理。"""

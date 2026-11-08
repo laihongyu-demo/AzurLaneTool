@@ -1,4 +1,4 @@
-# DataInsight - 环境依赖配置
+# AzurLaneTool - 环境依赖配置
 # Python >= 3.8
 
 # GUI 框架

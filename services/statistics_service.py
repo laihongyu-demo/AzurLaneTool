@@ -4,10 +4,40 @@
 提供数据统计相关的业务逻辑处理。
 """
 
+from dataclasses import dataclass
 from typing import Dict, Any, Optional, List
 
-from repositories.codex_repository import CodexGroupRepository, CodexTpRepository
+from repositories.codex_repository import (
+    CodexBuffRepository,
+    CodexGroupRepository,
+    CodexTpRepository,
+)
+from utils import codex_options as options
+from utils.db_schema import isMissingColumnError, isMissingTableError
 from utils.exceptions import DatabaseError
+
+
+@dataclass(frozen=True)
+class CodexBuffValueSummary:
+    """
+    单个 Buff 属性类型（buff_typ）的科技属性汇总值。
+
+    Attributes:
+        buff_typ: Buff 属性类型（耐久 / 炮击 / …）。
+        total_value: 该属性下所有记录的 buff_value 合计。
+        unlocked_value: 已解锁记录（buff_unlock='Y'）的 buff_value 合计。
+    """
+
+    buff_typ: str
+    total_value: int = 0
+    unlocked_value: int = 0
+
+    @property
+    def completion_rate(self) -> float:
+        """按 buff_value 汇总值计算的完成率（0–100）。"""
+        if self.total_value <= 0:
+            return 0.0
+        return self.unlocked_value / self.total_value * 100
 
 
 class StatisticsService:
@@ -20,7 +50,8 @@ class StatisticsService:
     def __init__(
         self,
         group_repository: Optional[CodexGroupRepository] = None,
-        tp_repository: Optional[CodexTpRepository] = None
+        tp_repository: Optional[CodexTpRepository] = None,
+        buff_repository: Optional[CodexBuffRepository] = None
     ):
         """
         初始化统计服务。
@@ -28,9 +59,11 @@ class StatisticsService:
         Args:
             group_repository: 舰娘图鉴组数据访问实例。
             tp_repository: TP数据访问实例。
+            buff_repository: 科技属性数据访问实例。
         """
         self._group_repository = group_repository or CodexGroupRepository()
         self._tp_repository = tp_repository or CodexTpRepository()
+        self._buff_repository = buff_repository or CodexBuffRepository()
 
     def getUnlockStatistics(self) -> Dict[str, Any]:
         """
@@ -88,6 +121,40 @@ class StatisticsService:
             "completion_rate": completion_rate
         }
 
+    def getBuffStatisticsByBuffTyp(self) -> List[CodexBuffValueSummary]:
+        """
+        获取科技属性按 buff_typ 汇总的 buff_value。
+
+        按 ``options.BUFF_TYPS`` 白名单顺序补齐 9 项；某属性没有记录时返回全 0，
+        保证窗口行数稳定。缺表 / 缺列时降级为 9 项全 0，不把数据库异常抛到界面。
+
+        Returns:
+            ``CodexBuffValueSummary`` 列表，顺序与 ``BUFF_TYPS`` 一致。
+        """
+        try:
+            rows = self._buff_repository.getProgressByBuffTyp()
+        except DatabaseError as e:
+            if isMissingTableError(e) or isMissingColumnError(e):
+                rows = []
+            else:
+                raise
+
+        rows_by_buff = {
+            str(row.get("buff_typ") or ""): row
+            for row in rows
+        }
+        result: List[CodexBuffValueSummary] = []
+        for buff_typ in options.BUFF_TYPS:
+            row = rows_by_buff.get(buff_typ, {})
+            result.append(
+                CodexBuffValueSummary(
+                    buff_typ=buff_typ,
+                    total_value=int(row.get("total_value") or 0),
+                    unlocked_value=int(row.get("unlocked_value") or 0),
+                )
+            )
+        return result
+
     def getBulinRequirements(self) -> Dict[str, Any]:
         """
         获取布里需求统计信息。
@@ -119,14 +186,64 @@ class StatisticsService:
 
         return result
 
+    def getOathStatistics(self) -> Dict[str, Any]:
+        """
+        获取誓约统计信息。
+
+        统计规则：
+        - 排除ship_group为'改造'或'联动'的舰娘
+        - 以oath_status = 'Y'作为已誓约判定条件
+        - 誓约率 = 已誓约数 / 有效总数 × 100
+
+        Returns:
+            包含total、oathed和oath_rate的字典。
+        """
+        oath_stats = self._group_repository.getOathStatistics()
+        total = oath_stats.get("total", 0)
+        oathed = oath_stats.get("oathed", 0)
+        oath_rate = (oathed / total * 100) if total > 0 else 0
+
+        return {
+            "total": total,
+            "oathed": oathed,
+            "oath_rate": oath_rate
+        }
+
     def getRemainingLevelingCount(self) -> int:
         """
-        获取剩余练级数量。
+        获取剩余练级数量（原定义口径）。
+
+        排除已满120级的档位（认知觉醒五阶、认知觉醒II），
+        即“未满 120 级”的舰娘总数。
 
         Returns:
             符合条件的舰娘数量。
         """
         return self._group_repository.getRemainingLevelingCount()
+
+    def getMaterialPendingCount(self) -> int:
+        """
+        获取仍需消耗心智单元的舰娘数量（主值口径）。
+
+        在剩余练级基础上再排除“已不需要消耗心智单元”的档位（认知觉醒四阶），
+        即：未觉醒、认知觉醒一阶、二阶、三阶。
+
+        Returns:
+            符合条件的舰娘数量。
+        """
+        return self._group_repository.getRemainingLevelingCount(options.LEVELS_NO_MATERIAL)
+
+    def getLevelingRequiredCount(self) -> int:
+        """
+        获取还需要练级的舰娘数量（括弧口径）。
+
+        在剩余练级基础上再排除“经验已满足120级”的档位（认知觉醒一阶），
+        即：未觉醒、认知觉醒二阶、三阶、四阶。
+
+        Returns:
+            符合条件的舰娘数量。
+        """
+        return self._group_repository.getRemainingLevelingCount(options.LEVELS_EXP_SUFFICIENT)
 
     def getAllStatistics(self) -> Dict[str, Any]:
         """
@@ -134,12 +251,17 @@ class StatisticsService:
 
         Returns:
             包含所有统计数据的字典，预留扩展接口。
+            remaining_leveling 为兼容保留的原定义口径，
+            material_pending / leveling_required 为面板展示的两个口径。
         """
         return {
             "unlock": self.getUnlockStatistics(),
             "tp": self.getTpStatistics(),
             "bulin": self.getBulinRequirements(),
-            "remaining_leveling": self.getRemainingLevelingCount()
+            "oath": self.getOathStatistics(),
+            "remaining_leveling": self.getRemainingLevelingCount(),
+            "material_pending": self.getMaterialPendingCount(),
+            "leveling_required": self.getLevelingRequiredCount()
         }
 
     def refreshStatistics(self) -> Dict[str, Any]:

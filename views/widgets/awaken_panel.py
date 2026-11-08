@@ -125,11 +125,17 @@ class AwakenPanel(QWidget):
         self._available_levels = self._awaken_service.getAvailableLevels(ship.ship_level or "未觉醒")
 
         self._levelComboBox.clear()
-        self._levelComboBox.setEnabled(True)
         for level in self._available_levels:
             self._levelComboBox.addItem(level)
 
-        self._awakenBtn.setEnabled(False)
+        if self._available_levels:
+            # 默认选中第一个可觉醒阶段（即当前等级的下一阶），免去每次手动选择
+            self._levelComboBox.setEnabled(True)
+            self._levelComboBox.setCurrentIndex(0)
+            self._awakenBtn.setEnabled(True)
+        else:
+            self._levelComboBox.setEnabled(False)
+            self._awakenBtn.setEnabled(False)
 
     def _onLevelSelected(self, index: int) -> None:
         """觉醒阶段选择事件处理。"""
@@ -173,7 +179,8 @@ class AwakenPanel(QWidget):
             result = self._awaken_service.awakenShip(ship.codex_id, new_level)
             self.awakenResult.emit(result)
             if result.success:
-                self.refreshData()
+                # 保留选中的舰娘，便于连续觉醒；升到最高阶后该舰娘不在列表中，自然清空
+                self.refreshData(select_codex_id=ship.codex_id)
                 self.dataRefreshed.emit()
         except ValidationError as e:
             error_result = AwakenResult(success=False, message=str(e))
@@ -189,8 +196,35 @@ class AwakenPanel(QWidget):
         """刷新按钮点击事件处理。"""
         self.refreshData()
 
-    def refreshData(self) -> None:
-        """刷新界面数据。"""
+    def _selectShipByCodexId(self, codex_id) -> bool:
+        """
+        按图鉴ID选中舰娘，并同步刷新信息区与按钮状态。
+
+        SearchableComboBox.setCurrentIndex() 不会发出 currentIndexChanged，
+        因此这里需要显式调用选择处理逻辑。
+
+        Args:
+            codex_id: 图鉴ID。
+
+        Returns:
+            选中成功返回 True，该舰娘已不在列表中返回 False。
+        """
+        target = str(codex_id)
+        for index, ship in enumerate(self._awakenable_ships):
+            if str(ship.codex_id) == target:
+                self._shipComboBox.setCurrentIndex(index)
+                self._onShipSelected(index)
+                return True
+
+        return False
+
+    def refreshData(self, select_codex_id=None) -> None:
+        """
+        刷新界面数据。
+
+        Args:
+            select_codex_id: 可选，刷新后需要保留选中的图鉴ID。
+        """
         self._shipComboBox.clear()
         self._levelComboBox.clear()
         self._awakenable_ships = []
@@ -205,6 +239,9 @@ class AwakenPanel(QWidget):
             for ship in self._awakenable_ships:
                 display_name = str(ship.ship_name) if ship.ship_name is not None else ""
                 self._shipComboBox.addItem(display_name, ship.codex_id)
+
+            if select_codex_id is not None:
+                self._selectShipByCodexId(select_codex_id)
 
         except DatabaseError as e:
             QMessageBox.critical(self, "数据库错误", f"加载数据失败: {e}")

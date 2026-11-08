@@ -1,0 +1,199 @@
+"""
+资源统计面板模块。
+
+页签级结构：
+- 「魔方任务看板」：内含任务 / 每月签到 / 世界巡游 / 常规录入四个同级分组；
+- 「红尖尖任务看板」：内含世界巡游 / 贸易许可证 / 常规录入；
+- 指级经验已迁移到「指挥官等级」卡片的独立窗口。
+
+整页放在滚动区里，内容变高时滚动浏览。
+"""
+
+from typing import Optional
+
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtWidgets import (
+    QFrame, QGridLayout, QGroupBox, QLabel, QScrollArea, QVBoxLayout, QWidget,
+)
+
+from services.cube_task_service import CubeTaskService, CubeTaskWriteResult
+from services.trade_license_service import TradeLicenseService
+from utils.constants import RESOURCE_TYPE_RED_GEM, TASK_PERIOD_CRUISE
+from views.widgets.cube_task_board_panel import CubeTaskBoardPanel
+from views.widgets.regular_entry_panel import RegularEntryPanel
+from views.widgets.trade_license_panel import TradeLicensePanel
+
+
+class ResourceManagementPanel(QWidget):
+    """
+    资源统计面板控件。
+
+    与「舰娘管理」页签同一组织方式：一个页签承载多个页签级看板；整体可垂直滚动。
+    """
+
+    dataRefreshed = pyqtSignal()
+    taskResult = pyqtSignal(object)
+    entryResult = pyqtSignal(object)
+
+    def __init__(
+        self,
+        cube_task_service: Optional[CubeTaskService] = None,
+        red_gem_task_service: Optional[CubeTaskService] = None,
+        trade_license_service: Optional[TradeLicenseService] = None,
+        parent: QWidget = None
+    ):
+        """
+        初始化资源统计面板。
+
+        Args:
+            cube_task_service: 魔方任务看板服务实例。
+            red_gem_task_service: 红尖尖任务看板服务实例。
+            trade_license_service: 贸易许可证服务实例。
+            parent: 父控件。
+        """
+        super().__init__(parent)
+        self._cube_task_service = cube_task_service or CubeTaskService()
+        self._red_gem_task_service = red_gem_task_service or CubeTaskService(
+            resource_type=RESOURCE_TYPE_RED_GEM
+        )
+        self._trade_license_service = trade_license_service or TradeLicenseService()
+        self._initUi()
+        self._connectSignals()
+
+    def _initUi(self) -> None:
+        """初始化用户界面。"""
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        # 顶部留出与两个看板间距一致的空隙，避免第一个分组贴着页签边缘
+        layout.setContentsMargins(0, 15, 0, 0)
+        layout.setSpacing(15)
+
+        self._taskBoardPanel = CubeTaskBoardPanel(self._cube_task_service)
+        layout.addWidget(self._taskBoardPanel)
+        layout.addWidget(self._buildRedGemBoard())
+        layout.addStretch()
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setWidget(content)
+
+        outer.addWidget(scroll)
+
+    def _buildRedGemBoard(self) -> QGroupBox:
+        """
+        构建红尖尖任务看板（与魔方任务看板同级）。
+
+        包含世界巡游、贸易许可证与常规录入三段。
+
+        布局参考魔方看板：4 列网格；世界巡游与常规录入在上方各占 2 列，
+        贸易许可证在下一行通栏；常规录入与世界巡游平行。
+
+        Returns:
+            红尖尖看板分组控件。
+        """
+        group = QGroupBox("红尖尖任务看板")
+        layout = QGridLayout(group)
+        layout.setContentsMargins(8, 12, 8, 10)
+        layout.setHorizontalSpacing(8)
+        layout.setVerticalSpacing(6)
+
+        hint = QLabel(
+            "世界巡游每期 6 档、每档 50；贸易许可证每次续约 +500；"
+            "每日 1 魔方请在魔方常规录入中手动补记。",
+            self,
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #888; font-size: 12px;")
+        layout.addWidget(hint, 0, 0, 1, 4)
+
+        self._redGemCruisePanel = CubeTaskBoardPanel(
+            task_service=self._red_gem_task_service,
+            board_title="世界巡游",
+            include_entry=False,
+            period_types=(TASK_PERIOD_CRUISE,),
+            compact_header=True,
+            parent=self,
+        )
+        layout.addWidget(self._redGemCruisePanel, 1, 0, 1, 2)
+
+        self._tradeLicensePanel = TradeLicensePanel(
+            self._trade_license_service, parent=self
+        )
+
+        entry_group = QGroupBox("常规录入")
+        entry_layout = QVBoxLayout(entry_group)
+        entry_layout.setContentsMargins(8, 12, 8, 10)
+        entry_layout.setSpacing(6)
+        self._redGemEntryPanel = RegularEntryPanel(
+            resource_type=RESOURCE_TYPE_RED_GEM, parent=self
+        )
+        entry_layout.addWidget(self._redGemEntryPanel)
+        entry_hint = QLabel("补记非固定收支；方向由类型决定。", self)
+        entry_hint.setWordWrap(True)
+        entry_hint.setStyleSheet("color: #888; font-size: 12px;")
+        entry_layout.addWidget(entry_hint)
+        layout.addWidget(entry_group, 1, 2, 1, 2)
+
+        layout.addWidget(self._tradeLicensePanel, 2, 0, 1, 4)
+
+        for column in range(4):
+            layout.setColumnStretch(column, 1)
+        layout.setRowStretch(1, 1)
+        return group
+
+    def _connectSignals(self) -> None:
+        """连接信号与槽。"""
+        self._taskBoardPanel.dataRefreshed.connect(self._onDataRefreshed)
+        self._taskBoardPanel.resultReady.connect(self._onTaskResult)
+        self._taskBoardPanel.entryResult.connect(self.entryResult.emit)
+        self._redGemCruisePanel.dataRefreshed.connect(self._onDataRefreshed)
+        self._redGemCruisePanel.resultReady.connect(self._onTaskResult)
+        self._tradeLicensePanel.dataRefreshed.connect(self._onDataRefreshed)
+        self._tradeLicensePanel.resultReady.connect(self.entryResult.emit)
+        self._redGemEntryPanel.dataRefreshed.connect(self._onDataRefreshed)
+        self._redGemEntryPanel.entryRecorded.connect(self.entryResult.emit)
+
+    def _onDataRefreshed(self) -> None:
+        """子面板数据刷新完成事件处理。"""
+        self.dataRefreshed.emit()
+
+    def _onTaskResult(self, result: CubeTaskWriteResult) -> None:
+        """任务看板写操作结果事件处理。"""
+        self.taskResult.emit(result)
+
+    def onActivated(self) -> None:
+        """页签激活：同步三个看板的时间上下文，必要时刷新。"""
+        self._taskBoardPanel.onActivated()
+        self._redGemCruisePanel.onActivated()
+        self._tradeLicensePanel.onActivated()
+        self._redGemEntryPanel.onActivated()
+
+    def syncTimeContext(self) -> None:
+        """只同步时间控件（不查库），供全局刷新在重渲染前调用。"""
+        self._taskBoardPanel.syncTimeContext()
+        self._redGemCruisePanel.syncTimeContext()
+        self._tradeLicensePanel.syncTimeContext()
+        self._redGemEntryPanel.syncTimeContext()
+
+    def refreshData(self) -> None:
+        """刷新界面数据。"""
+        self._taskBoardPanel.refreshData()
+        self._redGemCruisePanel.refreshData()
+        self._tradeLicensePanel.refreshState()
+        self._redGemEntryPanel.refreshState()
+
+    def refreshEntryCategories(self) -> None:
+        """类型字典变更后，刷新两个常规录入面板的类型下拉。"""
+        self._taskBoardPanel.refreshEntryCategories()
+        self._redGemEntryPanel.refreshCategories()
+
+    def refreshEntryEvents(self) -> None:
+        """活动记录变更后，刷新常规录入的「所属活动」下拉（红尖尖不涉及活动）。"""
+        self._taskBoardPanel.refreshEntryEvents()
