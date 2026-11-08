@@ -24,8 +24,9 @@ from views.widgets.settings_panel import (  # noqa: E402
 APP = QApplication.instance() or QApplication([])
 
 
-def _event(direction="up", start="2026-10-17", end="2026-10-26", days=10, peak=1.36):
-    """构造一条待复核事件。"""
+def _event(direction="up", start="2026-10-17", end="2026-10-26", days=10, peak=1.36,
+           ongoing=False):
+    """构造一条事件记录。"""
     return BacktestEventRecord(
         direction=direction,
         strength="normal",
@@ -33,6 +34,7 @@ def _event(direction="up", start="2026-10-17", end="2026-10-26", days=10, peak=1
         end_date=end,
         days=days,
         peak_ratio=peak,
+        ongoing=ongoing,
     )
 
 
@@ -186,6 +188,35 @@ class _SectionCase(unittest.TestCase):
         self.assertEqual(section._statusLabel.text(), "-")
         self.assertIn("数据库错误", section._reasonsLabel.text())
         self.assertEqual(section._eventsTable.rowCount(), 0)
+
+
+    def testOngoingEventShowsAsInProgress(self):
+        """进行中的事件显示为「进行中」，不计入到期。"""
+        section = self._section(_StubBacktestService(DueStatus(
+            due=False,
+            ongoing_events=[_event(ongoing=True)],
+        )))
+
+        table = section._eventsTable
+        self.assertEqual(table.rowCount(), 1)
+        self.assertEqual(table.item(0, 4).text(), "进行中")
+        self.assertIn("进行中", section._reasonsLabel.text())
+        self.assertIn("当前无需复跑", section._reasonsLabel.text())
+
+    def testPendingRowsComeBeforeOngoing(self):
+        """待复核在前、进行中在后，状态列区分。"""
+        section = self._section(_StubBacktestService(DueStatus(
+            due=True,
+            reasons=["1 个待复核事件"],
+            pending_events=[_event(direction="down", start="2026-11-02", end="2026-11-07")],
+            ongoing_events=[_event(start="2026-10-17", end="2026-11-08", ongoing=True)],
+        )))
+
+        table = section._eventsTable
+        self.assertEqual(table.rowCount(), 2)
+        self.assertEqual(table.item(0, 4).text(), "待复核")
+        self.assertEqual(table.item(1, 4).text(), "进行中")
+        self.assertIn("待复核", section._reasonsLabel.text())
 
 
 class TestSettingsPanelWiring(unittest.TestCase):

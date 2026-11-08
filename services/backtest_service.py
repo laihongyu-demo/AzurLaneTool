@@ -975,7 +975,8 @@ class DueStatus:
         last_run_at: 上次运行时刻。
         days_since: 距上次运行的天数；从未运行时为 None。
         new_points: 距上次运行新增的有效快照条数。
-        pending_events: 待复核事件。
+        pending_events: 待复核事件（已结束、未标记）。
+        ongoing_events: 仍在持续的事件（只展示，不计入到期）。
         report_path: 上次报告路径。
     """
 
@@ -985,6 +986,7 @@ class DueStatus:
     days_since: Optional[int] = None
     new_points: int = 0
     pending_events: List[BacktestEventRecord] = field(default_factory=list)
+    ongoing_events: List[BacktestEventRecord] = field(default_factory=list)
     report_path: Optional[str] = None
 
 
@@ -1235,7 +1237,12 @@ class BacktestService:
             return []
         cutoff = points[-1][0] - timedelta(days=EXP_REGIME_EVENT_LOOKBACK_DAYS)
         series = [origin for origin in self.signalSeries(points) if origin.moment >= cutoff]
-        return self.detectEventsFromSeries(series)
+        events = self.detectEventsFromSeries(series)
+        # 段尾落在最新快照日 = 事件仍在持续：只展示“进行中”，不计入到期
+        latest_date = points[-1][0].strftime(RECORD_DATE_FORMAT)
+        for event in events:
+            event.ongoing = event.end_date == latest_date
+        return events
 
     def mergeEvents(
         self,
@@ -1260,6 +1267,8 @@ class BacktestService:
             if key in merged:
                 merged[key].handled_at = event.handled_at
             else:
+                # 未被本次检测到的历史事件：保留记录，但不再算“进行中”
+                event.ongoing = False
                 merged[key] = event
 
         cooldown = timedelta(days=EXP_REGIME_COOLDOWN_DAYS)
@@ -1304,11 +1313,11 @@ class BacktestService:
                 days_since = None
 
         new_points = max(0, len(points) - state.points_at_run) if state.last_run_at else len(points)
+        merged_events = self.mergeEvents(state.events, self.detectRegimeEvents(points))
         pending = [
-            event
-            for event in self.mergeEvents(state.events, self.detectRegimeEvents(points))
-            if not event.handled_at
+            event for event in merged_events if not event.handled_at and not event.ongoing
         ]
+        ongoing = [event for event in merged_events if event.ongoing]
 
         reasons: List[str] = []
         if state.last_run_at is None:
@@ -1328,6 +1337,7 @@ class BacktestService:
             days_since=days_since,
             new_points=new_points,
             pending_events=pending,
+            ongoing_events=ongoing,
             report_path=_displayPath(state.report_path) if state.report_path else None,
         )
 

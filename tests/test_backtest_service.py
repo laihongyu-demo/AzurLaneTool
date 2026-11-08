@@ -252,6 +252,57 @@ class TestRegimeEvents(_BacktestCase):
         self.assertTrue(events)
         self.assertEqual(events[-1].direction, "up")
 
+    def testOngoingFlagEndsAtLatestPoint(self):
+        """段尾落在最新快照日 → ongoing=True。"""
+        points = _eventPoints()
+        events = self._service().detectRegimeEvents(points)
+
+        self.assertTrue(events)
+        self.assertTrue(events[-1].ongoing)
+
+    def testEndedEventIsNotOngoing(self):
+        """事件结束后（最后一天不再满足）→ ongoing=False。"""
+        points = _eventPoints(extra_flat_days=8)
+        events = self._service().detectRegimeEvents(points)
+
+        self.assertTrue(events)
+        self.assertFalse(events[-1].ongoing)
+        self.assertNotEqual(events[-1].end_date, points[-1][0].strftime("%Y-%m-%d"))
+
+    def testOngoingEventDoesNotMakeDue(self):
+        """进行中的事件只展示，不计入到期。"""
+        points = _eventPoints()
+        self._writeState(
+            last_run_at=(BASE - timedelta(days=1)).strftime("%Y-%m-%d %H:%M"),
+            points_at_run=len(points),
+        )
+        service = self._service()
+
+        with patch("utils.time_source.today", return_value=BASE.date()):
+            status = service.getDueStatus(points=points)
+
+        self.assertFalse(status.due)
+        self.assertEqual(status.pending_events, [])
+        self.assertEqual(len(status.ongoing_events), 1)
+        self.assertTrue(status.ongoing_events[0].ongoing)
+
+    def testEndedEventBecomesPending(self):
+        """事件结束后转为待复核，才计入到期。"""
+        points = _eventPoints(extra_flat_days=8)
+        self._writeState(
+            last_run_at=(BASE - timedelta(days=1)).strftime("%Y-%m-%d %H:%M"),
+            points_at_run=len(points),
+        )
+        service = self._service()
+
+        with patch("utils.time_source.today", return_value=BASE.date()):
+            status = service.getDueStatus(points=points)
+
+        self.assertTrue(status.due)
+        self.assertEqual(len(status.pending_events), 1)
+        self.assertTrue(any("待复核" in reason for reason in status.reasons))
+        self.assertEqual(status.ongoing_events, [])
+
 
 class TestStateRepository(_BacktestCase):
     """状态文件测试（T-43 / T-45）。"""
@@ -283,7 +334,8 @@ class TestStateRepository(_BacktestCase):
             latest_snapshot_at="2026-10-26 18:09",
             summary={"slow": 11233.0},
             report_path="data/backtest/x.md",
-            events=[BacktestEventRecord("up", "normal", "2026-10-20", "2026-10-24", days=5)],
+            events=[BacktestEventRecord("up", "normal", "2026-10-20", "2026-10-24",
+                                        days=5, ongoing=True)],
         )
         self._repository.save(state)
         loaded = self._repository.load()
@@ -291,6 +343,7 @@ class TestStateRepository(_BacktestCase):
         self.assertEqual(loaded.last_run_at, "2026-10-26 18:00")
         self.assertEqual(len(loaded.events), 1)
         self.assertEqual(loaded.events[0].start_date, "2026-10-20")
+        self.assertTrue(loaded.events[0].ongoing)
         self.assertFalse(os.path.exists(self._state_path + ".tmp"))
 
     def testSaveReportWritesMarkdown(self):
@@ -397,6 +450,20 @@ def _snapshotsForEvent():
             value += 5000 if day < 45 else 20000
         snapshots.append(_snapshot(day + 1, start + timedelta(days=day), 5, value))
     return snapshots
+
+
+def _eventPoints(extra_flat_days: int = 0):
+    """构造「最近 9 天明显加速」的绝对经验点；可补若干零增长日让事件结束。"""
+    points = []
+    value = 0
+    start = BASE - timedelta(days=70)
+    for day in range(71):
+        if day > 0:
+            value += 5000 if day < 62 else 30000
+        points.append((start + timedelta(days=day), value))
+    for offset in range(1, extra_flat_days + 1):
+        points.append((start + timedelta(days=70 + offset), value))
+    return points
 
 
 if __name__ == "__main__":
