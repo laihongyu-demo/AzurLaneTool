@@ -89,10 +89,10 @@ class _SectionCase(unittest.TestCase):
         return BacktestCalibrationSection(service)
 
     def testStatusShowsLastRunAndNewPoints(self):
-        """状态行含上次回测时刻、距今天数与新增快照数。"""
+        """状态行含上次检查时刻、距今天数与新增记录数。"""
         section = self._section(_StubBacktestService(DueStatus(
             due=True,
-            reasons=["1 个待复核事件"],
+            reasons=["1 段节奏变化等你确认"],
             last_run_at="2026-10-26 21:00",
             days_since=0,
             new_points=12,
@@ -100,45 +100,46 @@ class _SectionCase(unittest.TestCase):
             report_path="data/backtest/20261026_2100.md",
         )))
 
-        self.assertIn("上次回测：2026-10-26 21:00", section._statusLabel.text())
-        self.assertIn("新增 12 条有效快照", section._statusLabel.text())
-        self.assertIn("建议复核", section._reasonsLabel.text())
-        self.assertIn("1 个待复核事件", section._reasonsLabel.text())
+        self.assertIn("上次检查：2026-10-26 21:00", section._statusLabel.text())
+        self.assertIn("之后新增 12 条记录", section._statusLabel.text())
+        self.assertIn("建议检查", section._reasonsLabel.text())
+        self.assertIn("1 段节奏变化等你确认", section._reasonsLabel.text())
         self.assertIn("20261026_2100.md", section._reportLabel.text())
 
     def testNeverRunShowsPlaceholder(self):
-        """从未回测 → 明确提示。"""
+        """从未检查 → 明确提示。"""
         section = self._section(_StubBacktestService(DueStatus(
-            due=True, reasons=["尚未运行过回测"],
+            due=True, reasons=["还没做过检查"],
         )))
 
-        self.assertEqual(section._statusLabel.text(), "尚未运行过回测")
+        self.assertEqual(section._statusLabel.text(), "还没做过检查")
 
     def testNotDueShowsNoAction(self):
-        """不到期 → 绿色「当前无需复跑」。"""
+        """不到期 → 绿色「现在不需要检查」。"""
         section = self._section(_StubBacktestService(DueStatus(due=False)))
 
-        self.assertEqual(section._reasonsLabel.text(), "当前无需复跑")
+        self.assertEqual(section._reasonsLabel.text(), "现在不需要检查")
 
     def testEventsTableRendersPendingEvents(self):
-        """事件表按服务层数据渲染，方向转中文。"""
+        """事件表按服务层数据渲染，方向与幅度转成用户用语。"""
         section = self._section(_StubBacktestService(DueStatus(
             due=True,
-            reasons=["1 个待复核事件"],
+            reasons=["1 段节奏变化等你确认"],
             pending_events=[_event(direction="down", start="2026-09-01", end="2026-09-08",
-                                   days=8)],
+                                   days=8, peak=0.67)],
         )))
 
         table = section._eventsTable
         self.assertEqual(table.rowCount(), 1)
-        self.assertEqual(table.item(0, 0).text(), "放缓")
+        self.assertEqual(table.item(0, 0).text(), "变慢")
         self.assertEqual(table.item(0, 1).text(), "2026-09-01 → 2026-09-08")
         self.assertEqual(table.item(0, 2).text(), "8 天")
+        self.assertEqual(table.item(0, 3).text(), "慢 33%")
         self.assertFalse(section._handleBtn.isEnabled())
 
     def testRunButtonCallsServiceAndEmitsResult(self):
-        """T-46：点击「立即回测」只调用一次服务，并转发结果。"""
-        service = _StubBacktestService(DueStatus(due=True, reasons=["尚未运行过回测"]))
+        """T-46：点击「立即检查」只调用一次服务，并转发结果。"""
+        service = _StubBacktestService(DueStatus(due=True, reasons=["还没做过检查"]))
         section = self._section(service)
         results = []
         section.resultReady.connect(results.append)
@@ -167,9 +168,9 @@ class _SectionCase(unittest.TestCase):
         self.assertTrue(section._runBtn.isEnabled())
 
     def testMarkHandledCallsService(self):
-        """T-47：选中事件后可标记已复核。"""
+        """T-47：选中事件后可确认已看过。"""
         service = _StubBacktestService(DueStatus(
-            due=True, reasons=["1 个待复核事件"], pending_events=[_event()],
+            due=True, reasons=["1 段节奏变化等你确认"], pending_events=[_event()],
         ))
         section = self._section(service)
         section._eventsTable.selectRow(0)
@@ -191,7 +192,7 @@ class _SectionCase(unittest.TestCase):
 
 
     def testOngoingEventShowsAsInProgress(self):
-        """进行中的事件显示为「进行中」，不计入到期。"""
+        """进行中的事件显示为「还在发生」，不计入到期。"""
         section = self._section(_StubBacktestService(DueStatus(
             due=False,
             ongoing_events=[_event(ongoing=True)],
@@ -199,24 +200,25 @@ class _SectionCase(unittest.TestCase):
 
         table = section._eventsTable
         self.assertEqual(table.rowCount(), 1)
-        self.assertEqual(table.item(0, 4).text(), "进行中")
-        self.assertIn("进行中", section._reasonsLabel.text())
-        self.assertIn("当前无需复跑", section._reasonsLabel.text())
+        self.assertEqual(table.item(0, 4).text(), "还在发生")
+        self.assertIn("还在发生", section._reasonsLabel.text())
+        self.assertIn("现在不需要检查", section._reasonsLabel.text())
 
     def testPendingRowsComeBeforeOngoing(self):
-        """待复核在前、进行中在后，状态列区分。"""
+        """待确认在前、进行中在后，状态列区分。"""
         section = self._section(_StubBacktestService(DueStatus(
             due=True,
-            reasons=["1 个待复核事件"],
-            pending_events=[_event(direction="down", start="2026-11-02", end="2026-11-07")],
+            reasons=["1 段节奏变化等你确认"],
+            pending_events=[_event(direction="down", start="2026-11-02", end="2026-11-07",
+                                   peak=0.67)],
             ongoing_events=[_event(start="2026-10-17", end="2026-11-08", ongoing=True)],
         )))
 
         table = section._eventsTable
         self.assertEqual(table.rowCount(), 2)
-        self.assertEqual(table.item(0, 4).text(), "待复核")
-        self.assertEqual(table.item(1, 4).text(), "进行中")
-        self.assertIn("待复核", section._reasonsLabel.text())
+        self.assertEqual(table.item(0, 4).text(), "等你确认")
+        self.assertEqual(table.item(1, 4).text(), "还在发生")
+        self.assertIn("等你确认", section._reasonsLabel.text())
 
 
 class TestSettingsPanelWiring(unittest.TestCase):

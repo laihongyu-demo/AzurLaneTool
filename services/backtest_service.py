@@ -1020,11 +1020,11 @@ class BacktestRun:
         生成状态栏提示。
 
         Returns:
-            中文消息，例如「回测完成：494 条快照，报告已保存」。
+            中文消息，例如「检查完成：494 条记录，报告已保存」。
         """
-        message = f"回测完成：{self.points} 条快照"
+        message = f"检查完成：{self.points} 条记录"
         if self.events:
-            message += f"，{len(self.events)} 个事件记录"
+            message += f"，{len(self.events)} 段节奏变化"
         if self.report_path:
             message += "，报告已保存"
         return message
@@ -1321,14 +1321,18 @@ class BacktestService:
 
         reasons: List[str] = []
         if state.last_run_at is None:
-            reasons.append("尚未运行过回测")
+            reasons.append("还没做过检查")
         else:
             if days_since is not None and days_since >= EXP_BACKTEST_INTERVAL_DAYS:
-                reasons.append(f"距上次回测 {days_since} 天（≥{EXP_BACKTEST_INTERVAL_DAYS}）")
+                reasons.append(
+                    f"距上次检查 {days_since} 天（建议每 {EXP_BACKTEST_INTERVAL_DAYS} 天一次）"
+                )
             if new_points >= EXP_BACKTEST_SAMPLE_DELTA:
-                reasons.append(f"新增 {new_points} 条有效快照（≥{EXP_BACKTEST_SAMPLE_DELTA}）")
+                reasons.append(
+                    f"新增 {new_points} 条记录（建议每 {EXP_BACKTEST_SAMPLE_DELTA} 条一次）"
+                )
         if pending:
-            reasons.append(f"{len(pending)} 个待复核事件")
+            reasons.append(f"{len(pending)} 段节奏变化等你确认")
 
         return DueStatus(
             due=bool(reasons),

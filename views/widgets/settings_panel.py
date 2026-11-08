@@ -56,8 +56,8 @@ DIRECTION_DISPLAY_ORDER = (RESOURCE_DIRECTION_EXPENSE, RESOURCE_DIRECTION_INCOME
 # 停用行用灰色弱化，但仍可选中后启用
 INACTIVE_ITEM_COLOR = "#999999"
 
-# 事件方向展示名
-EVENT_DIRECTION_LABELS = {"up": "加速", "down": "放缓"}
+# 事件方向展示名（用户侧用语）
+EVENT_DIRECTION_LABELS = {"up": "变快", "down": "变慢"}
 
 
 class CategoryDictionarySection(QGroupBox):
@@ -444,10 +444,10 @@ class CategoryDictionarySection(QGroupBox):
 
 class BacktestCalibrationSection(QGroupBox):
     """
-    回测与校准分组（#35 P3）。
+    效率体检分组（技术上对应「回测与校准」，#35 P3）。
 
-    显示到期状态、待复核事件与最近报告，并提供「立即回测」「标记已复核」。
-    回测只读数据库，不改主值、不改常量；运行结果通过 ``resultReady`` 转给状态栏。
+    用用户能看懂的方式展示：上次检查时间、是否需要检查、练级节奏变化与最近报告。
+    检查只读数据库，不改主值、不改常量；运行结果通过 ``resultReady`` 转给状态栏。
     """
 
     resultReady = pyqtSignal(object)
@@ -464,9 +464,13 @@ class BacktestCalibrationSection(QGroupBox):
             backtest_service: 回测服务实例。
             parent: 父控件。
         """
-        super().__init__("回测与校准", parent)
+        super().__init__("效率体检", parent)
         self._service = backtest_service or BacktestService()
         self._events: List = []
+        self.setToolTip(
+            "技术口径：回测 = walk-forward 校验 30 天端点与趋势阈值；"
+            "事件 = fast/slow 偏离 ±25% 持续 ≥5 天（强事件 ±50%×3）。只读数据，不改常量。"
+        )
         self._initUi()
         self._connectSignals()
         self.refresh()
@@ -478,9 +482,8 @@ class BacktestCalibrationSection(QGroupBox):
         layout.setSpacing(8)
 
         hint = QLabel(
-            "到期：距上次回测 ≥90 天或新增 ≥100 条有效快照；"
-            "事件：近期节奏偏离 30 天基线 ±25% 持续 5 天（强事件 ±50% 持续 3 天）。"
-            "回测只读数据库，不改主值与常量。",
+            "每 90 天或新增 100 条记录，建议做一次检查：看看「指级效率」的估算还准不准。"
+            "练级速度明显变快或变慢时，这里也会提醒你。检查只读数据，不会改动任何数值。",
             self,
         )
         hint.setWordWrap(True)
@@ -497,10 +500,10 @@ class BacktestCalibrationSection(QGroupBox):
 
         button_row = QHBoxLayout()
         button_row.setSpacing(8)
-        self._runBtn = QPushButton("立即回测", self)
-        self._runBtn.setToolTip("生成候选口径对比报告与运行记录（约 1 秒）")
-        self._handleBtn = QPushButton("标记已复核", self)
-        self._handleBtn.setToolTip("选中待复核事件后标记，表示已人工确认")
+        self._runBtn = QPushButton("立即检查", self)
+        self._runBtn.setToolTip("生成一份体检报告（约 1 秒），不会改动数据")
+        self._handleBtn = QPushButton("确认已看过", self)
+        self._handleBtn.setToolTip("选中一条「等你确认」的节奏变化后点击；确认后不再重复提醒")
         self._handleBtn.setEnabled(False)
         button_row.addWidget(self._runBtn)
         button_row.addWidget(self._handleBtn)
@@ -508,7 +511,7 @@ class BacktestCalibrationSection(QGroupBox):
         layout.addLayout(button_row)
 
         self._eventsTable = QTableWidget(0, 5, self)
-        self._eventsTable.setHorizontalHeaderLabels(["方向", "区间", "天数", "峰值", "状态"])
+        self._eventsTable.setHorizontalHeaderLabels(["变化", "时间", "持续", "幅度", "状态"])
         self._eventsTable.verticalHeader().setVisible(False)
         self._eventsTable.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self._eventsTable.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -518,6 +521,14 @@ class BacktestCalibrationSection(QGroupBox):
         self._eventsTable.setMinimumHeight(140)
         self._eventsTable.setMaximumHeight(180)
         layout.addWidget(self._eventsTable)
+
+        guide = QLabel(
+            "看到「等你确认」时：选中那一行，点「确认已看过」即可；不需要改任何设置。",
+            self,
+        )
+        guide.setWordWrap(True)
+        guide.setStyleSheet("color: #666; font-size: 12px;")
+        layout.addWidget(guide)
 
         self._reportLabel = QLabel("", self)
         self._reportLabel.setWordWrap(True)
@@ -540,7 +551,7 @@ class BacktestCalibrationSection(QGroupBox):
             self._showError(f"数据库错误：{e}")
             return
         except Exception as e:  # 只读区块兜底，避免设置页整体不可用
-            self._showError(f"回测状态不可用：{e}")
+            self._showError(f"检查状态不可用：{e}")
             return
         self._renderStatus(status)
         self._renderEvents(status.pending_events, status.ongoing_events)
@@ -553,28 +564,28 @@ class BacktestCalibrationSection(QGroupBox):
             status: 到期状态。
         """
         if status.last_run_at:
-            days = "" if status.days_since is None else f"（{status.days_since} 天前）"
+            days = "时间未知" if status.days_since is None else f"{status.days_since} 天前"
             self._statusLabel.setText(
-                f"上次回测：{status.last_run_at}{days}｜"
-                f"距上次新增 {status.new_points} 条有效快照"
+                f"上次检查：{status.last_run_at}（{days}）· "
+                f"之后新增 {status.new_points} 条记录"
             )
         else:
-            self._statusLabel.setText("尚未运行过回测")
+            self._statusLabel.setText("还没做过检查")
 
         ongoing_text = (
-            f"{len(status.ongoing_events)} 个事件进行中（暂不复核）"
+            f"{len(status.ongoing_events)} 段变化还在发生，暂不用确认"
             if status.ongoing_events
             else ""
         )
         if status.due:
-            text = "建议复核：" + "；".join(status.reasons)
+            text = "建议检查：" + "；".join(status.reasons)
             if ongoing_text:
                 text += "；" + ongoing_text
             self._reasonsLabel.setText(text)
             self._reasonsLabel.setStyleSheet("color: #b26a00;")
         else:
             self._reasonsLabel.setText(
-                "当前无需复跑" + (f"；{ongoing_text}" if ongoing_text else "")
+                "现在不需要检查" + (f"（{ongoing_text}）" if ongoing_text else "")
             )
             self._reasonsLabel.setStyleSheet("color: #2e7d32;")
 
@@ -582,13 +593,27 @@ class BacktestCalibrationSection(QGroupBox):
             f"最近报告：{status.report_path}" if status.report_path else ""
         )
 
+    @staticmethod
+    def _formatChange(event) -> str:
+        """
+        把事件峰值换算成「快 N% / 慢 N%」。
+
+        Args:
+            event: 事件记录。
+
+        Returns:
+            展示文本。
+        """
+        word = "快" if event.direction == "up" else "慢"
+        return f"{word} {round(abs(event.peak_ratio - 1) * 100)}%"
+
     def _renderEvents(self, pending: List, ongoing: List) -> None:
         """
         渲染事件表：待复核在前、进行中在后。
 
         Args:
             pending: 已结束、未复核的事件。
-            ongoing: 仍在持续的事件（不计入到期，可提前标记）。
+            ongoing: 仍在持续的事件（不计入到期，可提前确认）。
         """
         self._events = list(pending) + list(ongoing)
         self._eventsTable.setRowCount(0)
@@ -596,14 +621,14 @@ class BacktestCalibrationSection(QGroupBox):
             row = self._eventsTable.rowCount()
             self._eventsTable.insertRow(row)
             if event.ongoing:
-                status_text = "已复核·进行中" if event.handled_at else "进行中"
+                status_text = "已确认·还在发生" if event.handled_at else "还在发生"
             else:
-                status_text = "已复核" if event.handled_at else "待复核"
+                status_text = "已确认" if event.handled_at else "等你确认"
             values = [
                 EVENT_DIRECTION_LABELS.get(event.direction, event.direction),
                 f"{event.start_date} → {event.end_date}",
                 f"{event.days} 天",
-                f"{event.peak_ratio:.2f}",
+                self._formatChange(event),
                 status_text,
             ]
             for column, value in enumerate(values):
@@ -635,33 +660,33 @@ class BacktestCalibrationSection(QGroupBox):
     # ------------------------------------------------------------------ 操作
 
     def _onRunClicked(self) -> None:
-        """运行一次回测：同步执行，期间禁用按钮并显示等待光标。"""
+        """跑一次检查：同步执行，期间禁用按钮并显示等待光标。"""
         self._runBtn.setEnabled(False)
-        self._runBtn.setText("正在回测…")
+        self._runBtn.setText("正在检查…")
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             run = self._service.run()
         except (DatabaseError, ValidationError) as e:
-            QMessageBox.critical(self, "回测失败", str(e))
+            QMessageBox.critical(self, "检查失败", str(e))
             return
         except Exception as e:  # 兜底，不让未知异常拖垮设置页
-            QMessageBox.critical(self, "回测失败", f"回测未完成：{e}")
+            QMessageBox.critical(self, "检查失败", f"检查未完成：{e}")
             return
         finally:
             QApplication.restoreOverrideCursor()
             self._runBtn.setEnabled(True)
-            self._runBtn.setText("立即回测")
+            self._runBtn.setText("立即检查")
 
         self.resultReady.emit(run)
         self.refresh()
 
     def _onSelectionChanged(self) -> None:
-        """事件选中状态变化：决定「标记已复核」是否可用。"""
+        """事件选中状态变化：决定「确认已看过」是否可用。"""
         row = self._eventsTable.currentRow()
         self._handleBtn.setEnabled(0 <= row < len(self._events))
 
     def _onHandleClicked(self) -> None:
-        """把选中事件标记为已复核。"""
+        """把选中事件标记为已确认。"""
         row = self._eventsTable.currentRow()
         if row < 0 or row >= len(self._events):
             return
@@ -669,10 +694,10 @@ class BacktestCalibrationSection(QGroupBox):
         try:
             changed = self._service.markEventHandled(event.direction, event.start_date)
         except DatabaseError as e:
-            QMessageBox.critical(self, "回测记录", f"保存复核状态失败: {e}")
+            QMessageBox.critical(self, "节奏变化", f"保存确认状态失败: {e}")
             return
         if not changed:
-            QMessageBox.information(self, "回测记录", "该事件已复核或已不存在")
+            QMessageBox.information(self, "节奏变化", "这条记录已确认或已不存在")
         self.refresh()
 
 

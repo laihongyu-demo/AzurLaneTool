@@ -136,7 +136,7 @@ class TestDueStatus(_BacktestCase):
         status = service.getDueStatus(points=_dailyPoints(40))
 
         self.assertTrue(status.due)
-        self.assertIn("尚未运行过回测", status.reasons)
+        self.assertIn("还没做过检查", status.reasons)
         self.assertEqual(status.new_points, 41)
 
     def testDueByInterval(self):
@@ -151,7 +151,7 @@ class TestDueStatus(_BacktestCase):
 
         self.assertTrue(status.due)
         self.assertEqual(status.days_since, 120)
-        self.assertTrue(any("距上次回测 120 天" in reason for reason in status.reasons))
+        self.assertTrue(any("距上次检查 120 天" in reason for reason in status.reasons))
         self.assertEqual(state.last_run_at, status.last_run_at)
 
     def testDueBySampleDelta(self):
@@ -167,7 +167,7 @@ class TestDueStatus(_BacktestCase):
 
         self.assertTrue(status.due)
         self.assertEqual(status.new_points, 100)
-        self.assertTrue(any("新增 100 条有效快照" in reason for reason in status.reasons))
+        self.assertTrue(any("新增 100 条记录" in reason for reason in status.reasons))
 
     def testNotDueWhenFreshAndSmallDelta(self):
         """刚回测过、样本增量小 → 不到期。"""
@@ -300,7 +300,7 @@ class TestRegimeEvents(_BacktestCase):
 
         self.assertTrue(status.due)
         self.assertEqual(len(status.pending_events), 1)
-        self.assertTrue(any("待复核" in reason for reason in status.reasons))
+        self.assertTrue(any("等你确认" in reason for reason in status.reasons))
         self.assertEqual(status.ongoing_events, [])
 
 
