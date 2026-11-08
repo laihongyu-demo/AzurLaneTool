@@ -90,7 +90,8 @@ class EventRecordPanel(QWidget):
     def _initUi(self) -> None:
         """初始化用户界面。"""
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        # 顶部留出与其余页签一致的空隙，避免「活动记录」分组贴着页签边缘（比其它页签高 15px）
+        layout.setContentsMargins(0, 15, 0, 0)
         layout.setSpacing(10)
 
         self._group = QGroupBox("活动记录")

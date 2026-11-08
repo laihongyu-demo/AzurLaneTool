@@ -391,5 +391,20 @@ class TestRegularEntryEventSelector(_TempEventPanelCase):
             self.assertTrue(panel._eventCombo.isHidden())
 
 
+class TestEventPanelTabLayout(_TempEventPanelCase):
+    """页签布局：活动记录分组与其余页签保持同一顶部留白。"""
+
+    def testGroupBoxKeepsSameTopInsetAsOtherTabs(self):
+        """分组顶部留 15px，与数据看板 / 舰娘管理 / 资源统计 / 设置页签一致。"""
+        panel = self._buildPanel()
+        self.addCleanup(panel.deleteLater)
+        panel.resize(1024, 700)
+        panel.show()
+        APP.processEvents()
+
+        self.assertEqual(panel.layout().contentsMargins().top(), 15)
+        self.assertEqual(panel._group.mapTo(panel, panel._group.rect().topLeft()).y(), 15)
+
+
 if __name__ == "__main__":
     unittest.main()
