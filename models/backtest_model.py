@@ -22,7 +22,7 @@ class BacktestEventRecord:
         start_date: 事件首日（``yyyy-MM-dd``）。
         end_date: 事件末日。
         days: 持续的自然日数。
-        peak_ratio: 事件期间最大 |fast/slow| 偏离比值。
+        peak_ratio: 事件期间偏离 30 天基线最远一天的 fast/slow 比值（变快 >1、变慢 <1）。
         slow_start: 事件首日的 30 天日均。
         slow_end: 事件末日（复核时）的 30 天日均。
         sample_count: 事件期间的快照条数。

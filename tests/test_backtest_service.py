@@ -218,6 +218,32 @@ class TestRegimeEvents(_BacktestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].direction, "down")
 
+    def testPeakTakesLargestDeviationForUp(self):
+        """变快事件：peak_ratio 取偏离最远的最大值。"""
+        service = self._service()
+        series = [
+            _origin(0, 1.30), _origin(1, 1.55), _origin(2, 1.35),
+            _origin(3, 1.30), _origin(4, 1.28),
+        ]
+
+        events = service.detectEventsFromSeries(series)
+
+        self.assertEqual(len(events), 1)
+        self.assertAlmostEqual(events[0].peak_ratio, 1.55)
+
+    def testPeakTakesLargestDeviationForDown(self):
+        """变慢事件：peak_ratio 取偏离最远的最小值（旧实现误取最大值）。"""
+        service = self._service()
+        series = [
+            _origin(0, 0.70), _origin(1, 0.60), _origin(2, 0.66),
+            _origin(3, 0.72), _origin(4, 0.68),
+        ]
+
+        events = service.detectEventsFromSeries(series)
+
+        self.assertEqual(len(events), 1)
+        self.assertAlmostEqual(events[0].peak_ratio, 0.60)
+
     def testCooldownDropsSecondEvent(self):
         """T-42：同向两次事件间隔 <30 天 → 只保留第一次。"""
         service = self._service()
