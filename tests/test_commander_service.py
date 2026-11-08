@@ -174,7 +174,9 @@ class TestCommanderCardText(unittest.TestCase):
         tooltip = CommanderService(repository).getCommanderLevelCardTooltip()
 
         # 两条快照相差 10,000 经验 / 1 天 → 10,000 每天；277,293 ÷ 10,000 = 27.7 天
-        self.assertIn("进度 21.7%｜记录于", tooltip)
+        self.assertIn("进度 21.7%", tooltip)
+        self.assertIn("记录于", tooltip)
+        self.assertIn("口径：近 30 天日均", tooltip)
         self.assertNotIn("预期升级", tooltip)
         self.assertNotIn("预计升级", tooltip)
         self.assertNotIn("天后升级", tooltip)

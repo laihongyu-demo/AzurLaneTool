@@ -344,7 +344,7 @@ class TestRecentBlock(_EfficiencyCase):
         efficiency = self._service(snapshots).getExpEfficiency()
 
         self.assertIsNone(efficiency.fast_rate_per_day)
-        self.assertIn("近期样本不足", self._service(snapshots).getExpEfficiencyTooltip())
+        self.assertIn("近 14 天样本不足", self._service(snapshots).getExpEfficiencyTooltip())
 
 
 class TestTrend(_EfficiencyCase):
@@ -562,7 +562,8 @@ class TestUpgradeScenario(_EfficiencyCase):
         tooltip = service.getCommanderLevelCardTooltip()
 
         self.assertEqual(badge.text, "预计 21.5 天后升级")
-        self.assertIn("若维持近期节奏 16.3 天后升级", tooltip)
+        self.assertIn("若延续近 14 天平均，16.3 天后升级", tooltip)
+        self.assertIn("窗口实际跨 30.0 天（含 20.0 天缺口）", tooltip)
         self.assertNotIn("～", tooltip)
 
     def testNoScenarioWhenTrendStable(self):
@@ -575,7 +576,7 @@ class TestUpgradeScenario(_EfficiencyCase):
         ]
         service = self._service(snapshots)
 
-        self.assertNotIn("若维持近期节奏", service.getCommanderLevelCardTooltip())
+        self.assertNotIn("若延续近 14 天平均", service.getCommanderLevelCardTooltip())
 
 
 if __name__ == "__main__":
