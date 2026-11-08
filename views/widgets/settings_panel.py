@@ -466,7 +466,7 @@ class BacktestCalibrationSection(QGroupBox):
         """
         super().__init__("回测与校准", parent)
         self._service = backtest_service or BacktestService()
-        self._pending_events: List = []
+        self._events: List = []
         self._initUi()
         self._connectSignals()
         self.refresh()
@@ -543,7 +543,7 @@ class BacktestCalibrationSection(QGroupBox):
             self._showError(f"回测状态不可用：{e}")
             return
         self._renderStatus(status)
-        self._renderEvents(status.pending_events)
+        self._renderEvents(status.pending_events, status.ongoing_events)
 
     def _renderStatus(self, status: DueStatus) -> None:
         """
@@ -561,35 +561,50 @@ class BacktestCalibrationSection(QGroupBox):
         else:
             self._statusLabel.setText("尚未运行过回测")
 
+        ongoing_text = (
+            f"{len(status.ongoing_events)} 个事件进行中（暂不复核）"
+            if status.ongoing_events
+            else ""
+        )
         if status.due:
-            self._reasonsLabel.setText("建议复核：" + "；".join(status.reasons))
+            text = "建议复核：" + "；".join(status.reasons)
+            if ongoing_text:
+                text += "；" + ongoing_text
+            self._reasonsLabel.setText(text)
             self._reasonsLabel.setStyleSheet("color: #b26a00;")
         else:
-            self._reasonsLabel.setText("当前无需复跑")
+            self._reasonsLabel.setText(
+                "当前无需复跑" + (f"；{ongoing_text}" if ongoing_text else "")
+            )
             self._reasonsLabel.setStyleSheet("color: #2e7d32;")
 
         self._reportLabel.setText(
             f"最近报告：{status.report_path}" if status.report_path else ""
         )
 
-    def _renderEvents(self, events: List) -> None:
+    def _renderEvents(self, pending: List, ongoing: List) -> None:
         """
-        渲染待复核事件表。
+        渲染事件表：待复核在前、进行中在后。
 
         Args:
-            events: 待复核事件列表。
+            pending: 已结束、未复核的事件。
+            ongoing: 仍在持续的事件（不计入到期，可提前标记）。
         """
-        self._pending_events = list(events)
+        self._events = list(pending) + list(ongoing)
         self._eventsTable.setRowCount(0)
-        for event in events:
+        for event in self._events:
             row = self._eventsTable.rowCount()
             self._eventsTable.insertRow(row)
+            if event.ongoing:
+                status_text = "已复核·进行中" if event.handled_at else "进行中"
+            else:
+                status_text = "已复核" if event.handled_at else "待复核"
             values = [
                 EVENT_DIRECTION_LABELS.get(event.direction, event.direction),
                 f"{event.start_date} → {event.end_date}",
                 f"{event.days} 天",
                 f"{event.peak_ratio:.2f}",
-                "待复核",
+                status_text,
             ]
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
@@ -597,6 +612,8 @@ class BacktestCalibrationSection(QGroupBox):
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 else:
                     item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                if event.ongoing:
+                    item.setForeground(QBrush(QColor("#757575")))
                 self._eventsTable.setItem(row, column, item)
         self._handleBtn.setEnabled(False)
 
@@ -610,7 +627,7 @@ class BacktestCalibrationSection(QGroupBox):
         self._statusLabel.setText("-")
         self._reasonsLabel.setText(message)
         self._reasonsLabel.setStyleSheet("color: #c62828;")
-        self._pending_events = []
+        self._events = []
         self._eventsTable.setRowCount(0)
         self._handleBtn.setEnabled(False)
         self._reportLabel.setText("")
@@ -641,14 +658,14 @@ class BacktestCalibrationSection(QGroupBox):
     def _onSelectionChanged(self) -> None:
         """事件选中状态变化：决定「标记已复核」是否可用。"""
         row = self._eventsTable.currentRow()
-        self._handleBtn.setEnabled(0 <= row < len(self._pending_events))
+        self._handleBtn.setEnabled(0 <= row < len(self._events))
 
     def _onHandleClicked(self) -> None:
         """把选中事件标记为已复核。"""
         row = self._eventsTable.currentRow()
-        if row < 0 or row >= len(self._pending_events):
+        if row < 0 or row >= len(self._events):
             return
-        event = self._pending_events[row]
+        event = self._events[row]
         try:
             changed = self._service.markEventHandled(event.direction, event.start_date)
         except DatabaseError as e:
