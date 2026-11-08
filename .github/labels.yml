@@ -4,7 +4,7 @@
 # 类型（至少一个）：bug / enhancement / performance / data-quality / documentation / chore
 # 优先级（必须一个）：priority-high / priority-medium / priority-low
 # 区域（至少一个）：area-ui / area-service / area-data / area-build / area-docs
-# 流程（可选）：needs-decision
+# 流程（可选）：needs-decision / pending-verification
 
 - name: bug
   color: d73a4a
@@ -65,3 +65,10 @@
 - name: needs-decision
   color: d4c5f9
   description: 方案/口径待用户确认，确认前不实施
+
+# 2026-11-08 首次使用（#37）：代码已合并但需人工验证，验证通过后再关闭。
+# 该标签由 MCP 在给 issue 打标时自动创建，GitHub 侧描述为空；改色/填描述需在
+# Settings → Labels 手动同步（MCP GitHub 服务未提供改标签接口）。
+- name: pending-verification
+  color: ededed
+  description: 已修复待验证：需人工确认真实界面/真实数据，验证通过后移除再关闭
