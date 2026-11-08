@@ -1,8 +1,8 @@
 """
 资源卡片日环比角标单元测试。
 
-覆盖：上涨 / 下降 / 持平 / 今日未记录 / 无法比较 / 未来数据 / 锚点日 /
-大额缩写 / 空数据，以及角标文案、方向档位与 tooltip 说明。
+覆盖：上涨 / 下降 / 持平 / 今日未记录 / 断档改按今日净额 / 仅一天记录 /
+手填结余锚点 / 未来数据 / 大额缩写 / 空数据，以及角标文案、方向档位与 tooltip 说明。
 """
 
 import unittest
@@ -11,6 +11,8 @@ from unittest.mock import patch
 
 from models.resource_model import ResourceDailyModel
 from services.resource_service import (
+    DELTA_BASIS_DAILY,
+    DELTA_BASIS_TODAY_NET,
     DELTA_TONE_DOWN,
     DELTA_TONE_FLAT,
     DELTA_TONE_UP,
@@ -92,6 +94,9 @@ class TestDeltaTone(_FixedTodayCase):
         ]).getCardView(RESOURCE_TYPE_CUBE)
 
         self.assertIsNotNone(view.delta)
+        self.assertEqual(view.delta.basis, DELTA_BASIS_DAILY)
+        self.assertFalse(view.delta.isTodayNet)
+        self.assertEqual(view.delta.gap_days, 1)
         self.assertEqual(view.delta.delta, 10)
         self.assertEqual(view.delta.display_text, "↑10")
         self.assertEqual(view.delta.tone, DELTA_TONE_UP)
@@ -144,25 +149,85 @@ class TestDeltaTone(_FixedTodayCase):
 class TestDeltaEdges(_FixedTodayCase):
     """断档、仅一天、锚点与空数据测试。"""
 
-    def testSingleDayHasNoBadge(self):
-        """只有今天一条记录时，角标显示「无法比较」。"""
+    def testSingleDayUsesTodayNet(self):
+        """只有今天一条记录时，按今日净额给角标，不再显示「无法比较」（#37）。"""
         view = _service([("2026-10-18", 100, 0, None)]).getCardView(RESOURCE_TYPE_CUBE)
 
-        self.assertIsNone(view.delta)
-        self.assertEqual(view.badge_text, "无法比较")
-        self.assertEqual(view.badge_tone, DELTA_TONE_FLAT)
+        self.assertIsNotNone(view.delta)
+        self.assertEqual(view.delta.basis, DELTA_BASIS_TODAY_NET)
+        self.assertTrue(view.delta.isTodayNet)
+        self.assertEqual(view.delta.delta, 100)
+        self.assertEqual(view.badge_text, "↑100")
+        self.assertEqual(view.badge_tone, DELTA_TONE_UP)
         self.assertIn("仅一天记录", view.tooltip)
+        self.assertIn("按今日净额 +100 计算（收入 100 − 支出 0）", view.tooltip)
 
-    def testGapHasNoBadge(self):
-        """今日有记录但昨日无记录时不给数字角标，也不拿更早的记录冒充昨天。"""
+    def testGapUsesTodayNet(self):
+        """昨日断档时按今日净额给角标，tooltip 保留断档说明与缺口天数（#37）。"""
         view = _service([
-            ("2026-10-16", 100, 0, None),
-            ("2026-10-18", 50, 0, None),
+            ("2026-10-14", 4040, 0, None),
+            ("2026-10-18", 300, 0, None),
         ]).getCardView(RESOURCE_TYPE_CUBE)
 
-        self.assertIsNone(view.delta)
-        self.assertEqual(view.badge_text, "无法比较")
+        self.assertIsNotNone(view.delta)
+        self.assertEqual(view.delta.basis, DELTA_BASIS_TODAY_NET)
+        self.assertEqual(view.delta.delta, 300)
+        self.assertEqual(view.delta.gap_days, 4)
+        self.assertEqual(view.delta.previous_date, "2026-10-14")
+        self.assertEqual(view.badge_text, "↑300")
+        self.assertEqual(view.badge_tone, DELTA_TONE_UP)
         self.assertIn("昨日（2026-10-17）无记录", view.tooltip)
+        self.assertIn("按今日净额 +300 计算（收入 300 − 支出 0，不含 2026-10-15～2026-10-17 收支）", view.tooltip)
+        self.assertIn("上次记录 2026-10-14 结余 4,040 → 今日 4,340，跨 4 天", view.tooltip)
+
+    def testGapNetZeroShowsFlatBadge(self):
+        """断档日今日无收支时角标为 —，tooltip 说明今日无收支。"""
+        view = _service([
+            ("2026-10-16", 100, 0, None),
+            ("2026-10-18", 0, 0, None),
+        ]).getCardView(RESOURCE_TYPE_CUBE)
+
+        self.assertEqual(view.delta.delta, 0)
+        self.assertEqual(view.badge_text, "—")
+        self.assertEqual(view.badge_tone, DELTA_TONE_FLAT)
+        self.assertIn("今日无收支", view.tooltip)
+
+    def testGapOffsettingIncomeExpenseShowsFlatBadge(self):
+        """有进有出但净额为 0 时角标为 —，tooltip 用「今日净额 0」而不是「无收支」。"""
+        view = _service([
+            ("2026-10-16", 100, 0, None),
+            ("2026-10-18", 300, 300, None),
+        ]).getCardView(RESOURCE_TYPE_CUBE)
+
+        self.assertEqual(view.delta.delta, 0)
+        self.assertEqual(view.badge_text, "—")
+        self.assertIn("今日净额 0（收入 300 − 支出 300", view.tooltip)
+        self.assertNotIn("今日无收支", view.tooltip)
+
+    def testGapTodayAnchorShowsFlatBadge(self):
+        """今日是手填结余锚点时不给数字，角标 — 且 tooltip 标注（#37 边界）。"""
+        view = _service([
+            ("2026-10-16", 100, 0, None),
+            ("2026-10-18", 0, 0, 500),
+        ]).getCardView(RESOURCE_TYPE_CUBE)
+
+        self.assertTrue(view.delta.has_anchor)
+        self.assertEqual(view.delta.delta, 0)
+        self.assertEqual(view.badge_text, "—")
+        self.assertEqual(view.badge_tone, DELTA_TONE_FLAT)
+        self.assertIn("今日为手填结余，不按净额比较", view.tooltip)
+
+    def testGapPreviousAnchorKeepsTodayNet(self):
+        """上次记录日是锚点不影响今日净额：角标仍给数字，只在说明里标注锚点。"""
+        view = _service([
+            ("2026-10-16", 0, 0, 4000),
+            ("2026-10-18", 10, 0, None),
+        ]).getCardView(RESOURCE_TYPE_CUBE)
+
+        self.assertEqual(view.delta.delta, 10)
+        self.assertEqual(view.badge_text, "↑10")
+        self.assertTrue(view.delta.has_anchor)
+        self.assertIn("含手填结余", view.tooltip)
 
     def testNoTodayRecordShowsNotRecordedBadge(self):
         """今天还没记录时，角标为「未记录」，tooltip 保留最近一次日环比。"""

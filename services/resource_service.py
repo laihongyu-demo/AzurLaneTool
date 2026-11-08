@@ -37,6 +37,10 @@ DELTA_TONE_UP = "up"
 DELTA_TONE_DOWN = "down"
 DELTA_TONE_FLAT = "flat"
 
+# 角标的计算口径：连续两天用结余差；昨日断档 / 仅一天记录改用今日净额（#37）
+DELTA_BASIS_DAILY = "daily"
+DELTA_BASIS_TODAY_NET = "today_net"
+
 # 角标数值超过该位数改用 K/M 缩写，与卡片的"大概数值"口径保持一致
 DELTA_ABBREVIATE_THRESHOLD = 10000
 
@@ -44,15 +48,25 @@ DELTA_ABBREVIATE_THRESHOLD = 10000
 @dataclass
 class ResourceDailyDelta:
     """
-    卡片结余相较昨日的变化。
+    卡片最新的变化量（今日 vs 昨日，断档时退化为今日净额）。
+
+    ``delta`` 的含义随 ``basis`` 变化，调用方不要假定它等于两个结余之差（#37）：
+
+    - ``basis == DELTA_BASIS_DAILY``：``delta = latest_balance - previous_balance``；
+    - ``basis == DELTA_BASIS_TODAY_NET``：``delta = 今日收入 - 今日支出``，
+      此时 ``previous_date`` 是**上次记录日**而非昨日，``gap_days`` 为与今天相隔的天数。
 
     Attributes:
         delta: 变化量（正数上涨、负数下降、0 持平）。
         latest_date: 最新记录日 ``yyyy-MM-dd``。
-        previous_date: 前一日 ``yyyy-MM-dd``。
+        previous_date: ``daily`` 口径为前一日；``today_net`` 口径为上次记录日，
+            仅有今天一条记录时为空串。
         latest_balance: 最新记录日结余。
-        previous_balance: 前一日结余。
-        has_anchor: 两天中是否含手填结余锚点（锚点会人为跳变结余）。
+        previous_balance: 前一日 / 上次记录日结余；没有更早记录时为 0。
+        has_anchor: 参与比较的日期中是否含手填结余锚点（锚点会人为跳变结余）。
+        basis: 计算口径，``daily`` / ``today_net``。
+        gap_days: ``today_net`` 口径下上次记录距今的天数（无更早记录时为 0）；
+            ``daily`` 口径为 1。
     """
 
     delta: int
@@ -61,6 +75,18 @@ class ResourceDailyDelta:
     latest_balance: int
     previous_balance: int
     has_anchor: bool = False
+    basis: str = DELTA_BASIS_DAILY
+    gap_days: int = 0
+
+    @property
+    def isTodayNet(self) -> bool:
+        """
+        是否按「今日净额」口径计算。
+
+        Returns:
+            ``True`` 表示 ``delta`` 是今日收支净额，不是结余差。
+        """
+        return self.basis == DELTA_BASIS_TODAY_NET
 
     @property
     def tone(self) -> str:
@@ -104,9 +130,9 @@ class ResourceCardView:
     Attributes:
         text: 卡片数值文本（大概数值口径）。
         tooltip: 悬停提示（精确值 + 末次记录 + 日环比说明）。
-        delta: 日环比结果；不可比时为 None。
+        delta: 日环比结果；「未记录」「数据异常」「无数据」时为 None。
         badge_text: 角标文案；无角标时为空串。除数字角标外，也用于
-            「未记录」「无法比较」这类灰色状态。
+            「未记录」「数据异常」这类灰色状态。
         badge_tone: 角标配色档位，``up`` / ``down`` / ``flat``。
     """
 
@@ -287,9 +313,12 @@ class ResourceService:
         """
         按「今天 vs 昨天」计算日环比角标。
 
-        只有最新记录日就是今天、且昨天也有记录时才给出数字角标：
+        今天有记录时给出数字角标：
+        - 昨天也有记录（连续）：``delta = 今日结余 - 昨日结余``（``daily`` 口径）；
+        - 昨天断档 / 仅有今天一天：``delta = 今日收入 - 今日支出``（``today_net`` 口径， #37）。
+
+        今天没有记录或最新记录晚于今天时不猜数字：
         - 今天还没有记录：灰色「未记录」，tooltip 保留最近一次日环比；
-        - 今天有记录但昨天断档：灰色「无法比较」；
         - 最新记录晚于今天（脏数据）：灰色「数据异常」。
 
         Args:
@@ -299,17 +328,20 @@ class ResourceService:
         Returns:
             ``(环比结果或 None, 追加到 tooltip 的说明文案, 角标文案, 角标配色)``。
         """
+        latest = series[-1]
+        latest_date = date.fromisoformat(latest[BALANCE_DATE])
+
+        if latest_date > today:
+            return (
+                None,
+                f"最新记录日期 {latest_date:%Y-%m-%d} 晚于今天，请检查数据",
+                "数据异常",
+                DELTA_TONE_FLAT,
+            )
+
         if len(series) < 2:
-            latest_date = date.fromisoformat(series[-1][BALANCE_DATE])
-            if latest_date > today:
-                return (
-                    None,
-                    f"最新记录日期 {latest_date:%Y-%m-%d} 晚于今天，请检查数据",
-                    "数据异常",
-                    DELTA_TONE_FLAT,
-                )
             if latest_date == today:
-                return None, "仅一天记录，无法比较", "无法比较", DELTA_TONE_FLAT
+                return self._buildTodayNetDelta(latest, None, today)
             return (
                 None,
                 f"今日未记录｜仅一天记录（{latest_date:%Y-%m-%d}）",
@@ -317,9 +349,7 @@ class ResourceService:
                 DELTA_TONE_FLAT,
             )
 
-        latest = series[-1]
         previous = series[-2]
-        latest_date = date.fromisoformat(latest[BALANCE_DATE])
         previous_date = date.fromisoformat(previous[BALANCE_DATE])
         latest_balance = int(latest[BALANCE_VALUE])
         previous_balance = int(previous[BALANCE_VALUE])
@@ -329,14 +359,6 @@ class ResourceService:
         )
         anchor_note = "（含手填结余）" if has_anchor else ""
         consecutive = latest_date - previous_date == timedelta(days=1)
-
-        if latest_date > today:
-            return (
-                None,
-                f"最新记录日期 {latest_date:%Y-%m-%d} 晚于今天，请检查数据",
-                "数据异常",
-                DELTA_TONE_FLAT,
-            )
 
         if latest_date != today:
             if consecutive:
@@ -364,12 +386,7 @@ class ResourceService:
             return None, note, "未记录", DELTA_TONE_FLAT
 
         if not consecutive:
-            return (
-                None,
-                f"今日有记录，但昨日（{today - timedelta(days=1):%Y-%m-%d}）无记录，无法比较",
-                "无法比较",
-                DELTA_TONE_FLAT,
-            )
+            return self._buildTodayNetDelta(latest, previous, today)
 
         delta = ResourceDailyDelta(
             delta=latest_balance - previous_balance,
@@ -378,6 +395,8 @@ class ResourceService:
             latest_balance=latest_balance,
             previous_balance=previous_balance,
             has_anchor=has_anchor,
+            basis=DELTA_BASIS_DAILY,
+            gap_days=1,
         )
 
         if delta.delta == 0:
@@ -392,6 +411,103 @@ class ResourceService:
                 f"{delta.latest_date} {formatExact(delta.latest_balance)}）{anchor_note}"
             )
         return delta, note, delta.display_text, delta.tone
+
+    def _buildTodayNetDelta(
+        self, latest: Dict, previous: Optional[Dict], today: date
+    ) -> Tuple[ResourceDailyDelta, str, str, str]:
+        """
+        昨日断档 / 仅有今天一天时，用「今日收入 − 今日支出」给出角标（#37 口径 A）。
+
+        为什么不用「今日结余 − 上次记录结余」：断档多日时那个差额是多日累计，
+        写进角标会被读成「一天的变化」（#25 的顾虑）；今日净额只描述今天进出的钱，
+        金额可逐笔核对，缺口日的收支则明确排除。
+
+        手填结余日（``balance_override`` 非空）不给出数字：锚点会让结余跳变，
+        与当日净额不是同一回事，强行相减会误导。
+
+        Args:
+            latest: 结余链最后一行（今天）。
+            previous: 上一次有记录的日期；仅有今天一天记录时为 None。
+            today: 今天。
+
+        Returns:
+            ``(环比结果, tooltip 补充文案, 角标文案, 角标配色)``。
+        """
+        income = int(latest.get(BALANCE_INCOME) or 0)
+        expense = int(latest.get(BALANCE_EXPENSE) or 0)
+        latest_balance = int(latest[BALANCE_VALUE])
+        today_is_anchor = latest.get(BALANCE_OVERRIDE) is not None
+
+        if previous is None:
+            previous_date = ""
+            previous_balance = 0
+            gap_days = 0
+            head = "仅一天记录"
+        else:
+            previous_date = str(previous[BALANCE_DATE])
+            previous_balance = int(previous[BALANCE_VALUE])
+            gap_days = (today - date.fromisoformat(previous_date)).days
+            head = f"今日有记录，昨日（{today - timedelta(days=1):%Y-%m-%d}）无记录"
+
+        previous_is_anchor = previous is not None and previous.get(BALANCE_OVERRIDE) is not None
+        net = 0 if today_is_anchor else income - expense
+
+        delta = ResourceDailyDelta(
+            delta=net,
+            latest_date=latest[BALANCE_DATE],
+            previous_date=previous_date,
+            latest_balance=latest_balance,
+            previous_balance=previous_balance,
+            has_anchor=today_is_anchor or previous_is_anchor,
+            basis=DELTA_BASIS_TODAY_NET,
+            gap_days=gap_days,
+        )
+
+        amount = f"收入 {formatExact(income)} − 支出 {formatExact(expense)}"
+        gap_span = self._formatGapSpan(previous_date, today)
+        if gap_span:
+            amount = f"{amount}，不含 {gap_span} 收支"
+
+        if today_is_anchor:
+            basis_text = f"今日为手填结余，不按净额比较（{amount}）"
+        elif income == 0 and expense == 0:
+            basis_text = "今日无收支"
+        elif net == 0:
+            # 有进有出但相抵时不能说「无收支」，否则与后面的收/支数字自相矛盾
+            basis_text = f"今日净额 0（{amount}）"
+        else:
+            basis_text = f"按今日净额 {net:+d} 计算（{amount}）"
+
+        parts = [head, basis_text]
+        if previous is not None:
+            parts.append(
+                f"上次记录 {previous_date} 结余 {formatExact(previous_balance)} → "
+                f"今日 {formatExact(latest_balance)}，跨 {gap_days} 天"
+                f"{'（含手填结余）' if previous_is_anchor else ''}"
+            )
+        return delta, "；".join(parts), delta.display_text, delta.tone
+
+    @staticmethod
+    def _formatGapSpan(previous_date: str, today: date) -> str:
+        """
+        格式化断档区间（上次记录日的次日到今天前一天）。
+
+        Args:
+            previous_date: 上次记录日 ``yyyy-MM-dd``；空串表示没有更早记录。
+            today: 今天。
+
+        Returns:
+            缺口的日期文案，如 ``2026-10-27～2026-10-29``；没有缺口时返回空串。
+        """
+        if not previous_date:
+            return ""
+        gap_start = date.fromisoformat(previous_date) + timedelta(days=1)
+        gap_end = today - timedelta(days=1)
+        if gap_start > gap_end:
+            return ""
+        if gap_start == gap_end:
+            return f"{gap_start:%Y-%m-%d}"
+        return f"{gap_start:%Y-%m-%d}～{gap_end:%Y-%m-%d}"
 
     def getCardText(self, resource_type: str) -> str:
         """
