@@ -218,7 +218,7 @@ class StatisticsPanel(QWidget):
         页签激活 / 跨天检查。
 
         跨天时「执勤天数」会变化；资源卡角标也要从昨天的数字切成
-        「未记录」/「无法比较」（#25），因此额外刷新一次两张卡。
+        「未记录」（#25），因此额外刷新一次两张卡。
         同日重复激活不查库。
         """
         if time_source.today() == self._last_seen_date:
