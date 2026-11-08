@@ -93,6 +93,8 @@ class StatisticsPanel(QWidget):
         # 初始口径提示；每次刷新会被服务层返回的口径说明覆盖
         self._expEfficiencyCard.setToolTip("指级效率：近 30 天日均（绝对经验差 ÷ 实际跨度）")
 
+        # 卡片按内容宽度排布，两侧留白由 stretch 吸收：数值行只放数值，
+        # 角标在标题行（#38），因此角标文案变化不会把同排其他卡压窄。
         commander_stats_layout.addStretch()
         commander_stats_layout.addWidget(self._commanderLevelCard)
         commander_stats_layout.addStretch()
@@ -228,8 +230,18 @@ class StatisticsPanel(QWidget):
         try:
             self.updateResourceStats()
         except Exception:
-            self._cubeCard.setValue("错误")
-            self._redGemCard.setValue("错误")
+            self._setResourceError()
+
+    def _setResourceError(self) -> None:
+        """
+        资源卡降级为「错误」并清掉日环比角标。
+
+        角标现在贴在标题行（#38），残留在「错误」旁边的「未记录 / ↓30」会自相矛盾，
+        因此错误态一并清除。
+        """
+        for card in (self._cubeCard, self._redGemCard):
+            card.setValue("错误")
+            card.clearBadge()
 
     def refreshDateSensitive(self) -> None:
         """只刷新日期敏感项（执勤天数），不重算统计聚合。"""
@@ -376,8 +388,7 @@ class StatisticsPanel(QWidget):
         self._commanderLevelCard.setValue("错误")
         self._commanderLevelCard.clearTitleBadge()
         self._expEfficiencyCard.setValue("错误")
-        self._cubeCard.setValue("错误")
-        self._redGemCard.setValue("错误")
+        self._setResourceError()
         self._totalCard.setValue("错误")
         self._unlockedCard.setValue("错误")
         self._lockedCard.setValue("错误")
@@ -417,7 +428,8 @@ class StatisticsPanel(QWidget):
         更新魔方 / 红尖尖卡片与悬停提示。
 
         大概数值口径：用 K/M/B/T 缩写并保留一位小数；悬停显示精确数值与数据截止日期。
-        每张卡只扫一遍结余链（文本、提示与日环比角标共用同一次计算）。
+        每张卡只扫一遍结余链（文本、提示与日环比角标共用同一次计算）；
+        日环比角标显示在卡片标题行，不进数值行（#38）。
         """
         for card, resource_type in (
             (self._cubeCard, RESOURCE_TYPE_CUBE),
