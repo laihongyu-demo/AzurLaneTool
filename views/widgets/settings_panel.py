@@ -522,11 +522,10 @@ class BacktestCalibrationSection(QGroupBox):
         self._eventsTable.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._eventsTable.setSelectionMode(QAbstractItemView.SingleSelection)
         self._eventsTable.setAlternatingRowColors(True)
-        # 短列按内容取宽，时间列保证完整显示；只让「结论」吃掉剩余空间并省略
+        # 每列都按内容取宽；时间列刚好放下完整区间，结论列略宽（双击看全文）
         header = self._eventsTable.horizontalHeader()
-        for column in (0, 1, 2, 3, 4):
-            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(5, QHeaderView.Stretch)
+        for column in range(6):
+            header.setSectionResizeMode(column, QHeaderView.Interactive)
         self._eventsTable.setTextElideMode(Qt.ElideRight)
         self._eventsTable.setMinimumHeight(140)
         self._eventsTable.setMaximumHeight(180)
@@ -670,12 +669,30 @@ class BacktestCalibrationSection(QGroupBox):
                     item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                 if column == 1:
                     item.setToolTip(f"{event.start_date} → {event.end_date}")
+                if column == 4:
+                    item.setToolTip(status_text)
                 if column == 5:
                     item.setToolTip(event.note or "")
                 if event.ongoing or event.handled_at:
                     item.setForeground(QBrush(QColor("#757575")))
                 self._eventsTable.setItem(row, column, item)
+        self._fitEventColumns()
         self._handleBtn.setEnabled(False)
+
+    def _fitEventColumns(self) -> None:
+        """每列按内容取宽；时间列刚好显示完整区间，结论列略宽（96–120px）。"""
+        header = self._eventsTable.horizontalHeader()
+        for column in range(5):
+            content = max(
+                header.sectionSizeHint(column),
+                self._eventsTable.sizeHintForColumn(column),
+            )
+            header.resizeSection(column, content + 10)
+        note_content = max(
+            header.sectionSizeHint(5),
+            self._eventsTable.sizeHintForColumn(5),
+        )
+        header.resizeSection(5, max(96, min(note_content + 20, 120)))
 
     def _showError(self, message: str) -> None:
         """
