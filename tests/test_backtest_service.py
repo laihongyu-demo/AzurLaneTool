@@ -361,7 +361,7 @@ class TestStateRepository(_BacktestCase):
             summary={"slow": 11233.0},
             report_path="data/backtest/x.md",
             events=[BacktestEventRecord("up", "normal", "2026-10-20", "2026-10-24",
-                                        days=5, ongoing=True)],
+                                        days=5, ongoing=True, note="测试结论")],
         )
         self._repository.save(state)
         loaded = self._repository.load()
@@ -370,6 +370,7 @@ class TestStateRepository(_BacktestCase):
         self.assertEqual(len(loaded.events), 1)
         self.assertEqual(loaded.events[0].start_date, "2026-10-20")
         self.assertTrue(loaded.events[0].ongoing)
+        self.assertEqual(loaded.events[0].note, "测试结论")
         self.assertFalse(os.path.exists(self._state_path + ".tmp"))
 
     def testSaveReportWritesMarkdown(self):
@@ -446,13 +447,33 @@ class TestRun(_BacktestCase):
         self.assertTrue(run.events)
 
         event = run.events[0]
-        handled = service.markEventHandled(event.direction, event.start_date)
+        handled = service.markEventHandled(
+            event.direction, event.start_date, "真实低节奏，已恢复"
+        )
 
         self.assertTrue(handled)
         with patch("utils.time_source.today", return_value=BASE.date()):
             status = service.getDueStatus()
         self.assertFalse(any("待复核" in reason for reason in status.reasons))
         self.assertFalse(status.pending_events)
+        self.assertTrue(any(e.note == "真实低节奏，已恢复" for e in status.handled_events))
+        self.assertEqual(self._repository.load().events[0].note, "真实低节奏，已恢复")
+
+    def testHandledNoteSurvivesEventExtension(self):
+        """同一事件延长时，结论与已确认标记都保留。"""
+        stored = BacktestEventRecord(
+            "down", "normal", "2026-11-02", "2026-11-07", days=6, peak_ratio=0.60,
+            handled_at="2026-11-08 09:00", note="真实低节奏",
+        )
+        detected = BacktestEventRecord(
+            "down", "normal", "2026-11-02", "2026-11-08", days=7, peak_ratio=0.57,
+        )
+
+        merged = self._service([]).mergeEvents([stored], [detected])
+
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].note, "真实低节奏")
+        self.assertEqual(merged[0].handled_at, "2026-11-08 09:00")
 
     def testEventHandledStatusPreservedOnRerun(self):
         """重新运行回测时，已复核标记不会被覆盖。"""

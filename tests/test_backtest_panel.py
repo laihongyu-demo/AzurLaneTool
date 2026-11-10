@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt5.QtWidgets import QApplication  # noqa: E402
+from PyQt5.QtWidgets import QApplication, QHeaderView  # noqa: E402
 
 from models.backtest_model import BacktestEventRecord  # noqa: E402
 from services.backtest_service import BacktestRun, DueStatus  # noqa: E402
@@ -25,7 +25,7 @@ APP = QApplication.instance() or QApplication([])
 
 
 def _event(direction="up", start="2026-10-17", end="2026-10-26", days=10, peak=1.36,
-           ongoing=False):
+           ongoing=False, note="", handled_at=None):
     """构造一条事件记录。"""
     return BacktestEventRecord(
         direction=direction,
@@ -35,6 +35,8 @@ def _event(direction="up", start="2026-10-17", end="2026-10-26", days=10, peak=1
         days=days,
         peak_ratio=peak,
         ongoing=ongoing,
+        note=note,
+        handled_at=handled_at,
     )
 
 
@@ -76,8 +78,8 @@ class _StubBacktestService:
             raise self._run_error
         return self._run_result
 
-    def markEventHandled(self, direction, start_date):
-        self.handled.append((direction, start_date))
+    def markEventHandled(self, direction, start_date, note=""):
+        self.handled.append((direction, start_date, note))
         return True
 
 
@@ -133,7 +135,8 @@ class _SectionCase(unittest.TestCase):
         self.assertEqual(table.rowCount(), 1)
         self.assertEqual(table.horizontalHeaderItem(3).text(), "最大偏离")
         self.assertEqual(table.item(0, 0).text(), "变慢")
-        self.assertEqual(table.item(0, 1).text(), "2026-09-01 → 2026-09-08")
+        self.assertEqual(table.item(0, 1).text(), "09-01 → 09-08")
+        self.assertEqual(table.item(0, 1).toolTip(), "2026-09-01 → 2026-09-08")
         self.assertEqual(table.item(0, 2).text(), "8 天")
         self.assertEqual(table.item(0, 3).text(), "慢 33%")
         self.assertFalse(section._handleBtn.isEnabled())
@@ -169,7 +172,7 @@ class _SectionCase(unittest.TestCase):
         self.assertTrue(section._runBtn.isEnabled())
 
     def testMarkHandledCallsService(self):
-        """T-47：选中事件后可确认已看过。"""
+        """T-47：确认时弹出结论输入框，并把结论传给服务。"""
         service = _StubBacktestService(DueStatus(
             due=True, reasons=["1 段节奏变化等你确认"], pending_events=[_event()],
         ))
@@ -177,9 +180,29 @@ class _SectionCase(unittest.TestCase):
         section._eventsTable.selectRow(0)
 
         self.assertTrue(section._handleBtn.isEnabled())
-        section._handleBtn.click()
+        with patch(
+            "views.widgets.settings_panel.QInputDialog.getMultiLineText",
+            return_value=("真实低节奏，已恢复", True),
+        ):
+            section._handleBtn.click()
 
-        self.assertEqual(service.handled, [("up", "2026-10-17")])
+        self.assertEqual(service.handled, [("up", "2026-10-17", "真实低节奏，已恢复")])
+
+    def testCancelConclusionDoesNotMarkHandled(self):
+        """取消结论输入框 → 不写状态。"""
+        service = _StubBacktestService(DueStatus(
+            due=True, reasons=["1 段节奏变化等你确认"], pending_events=[_event()],
+        ))
+        section = self._section(service)
+        section._eventsTable.selectRow(0)
+
+        with patch(
+            "views.widgets.settings_panel.QInputDialog.getMultiLineText",
+            return_value=("", False),
+        ):
+            section._handleBtn.click()
+
+        self.assertEqual(service.handled, [])
 
     def testStatusErrorDegrades(self):
         """T-48：读取状态失败 → 显示原因，不抛异常。"""
@@ -220,6 +243,45 @@ class _SectionCase(unittest.TestCase):
         self.assertEqual(table.item(0, 4).text(), "等你确认")
         self.assertEqual(table.item(1, 4).text(), "还在发生")
         self.assertIn("等你确认", section._reasonsLabel.text())
+
+    def testHandledEventShowsConclusion(self):
+        """历史事件显示「已确认」与结论，且不能重复确认。"""
+        section = self._section(_StubBacktestService(DueStatus(
+            due=False,
+            handled_events=[_event(
+                direction="down", start="2026-11-02", end="2026-11-08", days=7, peak=0.67,
+                handled_at="2026-11-10 22:00", note="真实低节奏，已恢复",
+            )],
+        )))
+
+        table = section._eventsTable
+        self.assertEqual(table.horizontalHeaderItem(5).text(), "结论")
+        self.assertEqual(table.rowCount(), 1)
+        self.assertEqual(table.item(0, 4).text(), "已确认")
+        self.assertEqual(table.item(0, 5).text(), "真实低节奏，已恢复")
+        header = table.horizontalHeader()
+        self.assertEqual(header.sectionResizeMode(0), QHeaderView.ResizeToContents)
+        self.assertEqual(header.sectionResizeMode(1), QHeaderView.ResizeToContents)
+        self.assertEqual(header.sectionResizeMode(5), QHeaderView.Stretch)
+        section._eventsTable.selectRow(0)
+        self.assertFalse(section._handleBtn.isEnabled())
+
+    def testDoubleClickConclusionShowsFullText(self):
+        """双击「结论」列 → 弹窗显示完整结论。"""
+        section = self._section(_StubBacktestService(DueStatus(
+            due=False,
+            handled_events=[_event(
+                direction="down", start="2026-11-02", end="2026-11-08", days=7, peak=0.67,
+                handled_at="2026-11-10 22:00",
+                note="月末/月初真实低节奏，11-04 起已恢复，维持阈值",
+            )],
+        )))
+
+        with patch("views.widgets.settings_panel.QMessageBox.information") as info:
+            section._onCellDoubleClicked(0, 5)
+
+        self.assertTrue(info.called)
+        self.assertIn("11-04 起已恢复", info.call_args[0][2])
 
 
 class TestSettingsPanelWiring(unittest.TestCase):

@@ -977,6 +977,7 @@ class DueStatus:
         new_points: 距上次运行新增的有效快照条数。
         pending_events: 待复核事件（已结束、未标记）。
         ongoing_events: 仍在持续的事件（只展示，不计入到期）。
+        handled_events: 最近已确认的事件（用于回看结论，最多 10 条）。
         report_path: 上次报告路径。
     """
 
@@ -987,6 +988,7 @@ class DueStatus:
     new_points: int = 0
     pending_events: List[BacktestEventRecord] = field(default_factory=list)
     ongoing_events: List[BacktestEventRecord] = field(default_factory=list)
+    handled_events: List[BacktestEventRecord] = field(default_factory=list)
     report_path: Optional[str] = None
 
 
@@ -1268,6 +1270,7 @@ class BacktestService:
             key = (event.direction, event.start_date)
             if key in merged:
                 merged[key].handled_at = event.handled_at
+                merged[key].note = event.note
             else:
                 # 未被本次检测到的历史事件：保留记录，但不再算“进行中”
                 event.ongoing = False
@@ -1320,6 +1323,8 @@ class BacktestService:
             event for event in merged_events if not event.handled_at and not event.ongoing
         ]
         ongoing = [event for event in merged_events if event.ongoing]
+        handled = [event for event in merged_events if event.handled_at and not event.ongoing]
+        handled = handled[-10:]  # 只回看最近 10 条，避免历史无限增长
 
         reasons: List[str] = []
         if state.last_run_at is None:
@@ -1344,6 +1349,7 @@ class BacktestService:
             new_points=new_points,
             pending_events=pending,
             ongoing_events=ongoing,
+            handled_events=handled,
             report_path=_displayPath(state.report_path) if state.report_path else None,
         )
 
@@ -1406,18 +1412,20 @@ class BacktestService:
         self,
         direction: str,
         start_date: str,
+        note: str = "",
         handled_at: Optional[datetime] = None,
     ) -> bool:
         """
-        把某个事件标记为已复核（写入状态文件）。
+        把某个事件标记为已复核，并写入人工结论（状态文件）。
 
         Args:
             direction: ``up`` / ``down``。
             start_date: 事件首日（``yyyy-MM-dd``）。
+            note: 复核结论；可留空，空串表示不写结论。
             handled_at: 复核时刻；默认取当前时间。
 
         Returns:
-            是否有事件被更新。
+            是否有事件被更新；已确认的事件可再次调用以修改结论。
 
         Raises:
             DatabaseError: 状态写入失败时抛出。
@@ -1426,12 +1434,10 @@ class BacktestService:
         moment = handled_at or time_source.now()
         changed = False
         for event in state.events:
-            if (
-                event.direction == direction
-                and event.start_date == start_date
-                and not event.handled_at
-            ):
-                event.handled_at = moment.strftime(STATISTICS_DATETIME_FORMAT)
+            if event.direction == direction and event.start_date == start_date:
+                if not event.handled_at:
+                    event.handled_at = moment.strftime(STATISTICS_DATETIME_FORMAT)
+                event.note = (note or "").strip()
                 changed = True
         if changed:
             self._state_repository.save(state)
