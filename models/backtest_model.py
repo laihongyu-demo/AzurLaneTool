@@ -27,6 +27,7 @@ class BacktestEventRecord:
         slow_end: 事件末日（复核时）的 30 天日均。
         sample_count: 事件期间的快照条数。
         handled_at: 人工标记复核的时间；None 表示待复核。
+        note: 人工复核结论（可留空），随事件持久化。
         ongoing: 事件是否仍在持续（末日就是最新快照日）；True 时只展示“进行中”，不计入到期。
     """
 
@@ -40,6 +41,7 @@ class BacktestEventRecord:
     slow_end: int = 0
     sample_count: int = 0
     handled_at: Optional[str] = None
+    note: str = ""
     ongoing: bool = False
 
     def toDict(self) -> Dict[str, Any]:
@@ -60,6 +62,7 @@ class BacktestEventRecord:
             "slow_end": self.slow_end,
             "sample_count": self.sample_count,
             "handled_at": self.handled_at,
+            "note": self.note,
             "ongoing": self.ongoing,
         }
 
@@ -85,6 +88,7 @@ class BacktestEventRecord:
             slow_end=int(data.get("slow_end", 0) or 0),
             sample_count=int(data.get("sample_count", 0) or 0),
             handled_at=data.get("handled_at") or None,
+            note=str(data.get("note", "") or ""),
             ongoing=bool(data.get("ongoing", False)),
         )
 

@@ -510,8 +510,10 @@ class BacktestCalibrationSection(QGroupBox):
         button_row.addStretch()
         layout.addLayout(button_row)
 
-        self._eventsTable = QTableWidget(0, 5, self)
-        self._eventsTable.setHorizontalHeaderLabels(["变化", "时间", "持续", "最大偏离", "状态"])
+        self._eventsTable = QTableWidget(0, 6, self)
+        self._eventsTable.setHorizontalHeaderLabels(
+            ["变化", "时间", "持续", "最大偏离", "状态", "结论"]
+        )
         self._eventsTable.setToolTip(
             "最大偏离：事件期间偏离最厉害的一天，最近两周速度比最近一个月平均快/慢多少"
         )
@@ -520,7 +522,12 @@ class BacktestCalibrationSection(QGroupBox):
         self._eventsTable.setSelectionBehavior(QAbstractItemView.SelectRows)
         self._eventsTable.setSelectionMode(QAbstractItemView.SingleSelection)
         self._eventsTable.setAlternatingRowColors(True)
-        self._eventsTable.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        # 短列按内容取宽，时间列保证完整显示；只让「结论」吃掉剩余空间并省略
+        header = self._eventsTable.horizontalHeader()
+        for column in (0, 1, 2, 3, 4):
+            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(5, QHeaderView.Stretch)
+        self._eventsTable.setTextElideMode(Qt.ElideRight)
         self._eventsTable.setMinimumHeight(140)
         self._eventsTable.setMaximumHeight(180)
         layout.addWidget(self._eventsTable)
@@ -543,6 +550,7 @@ class BacktestCalibrationSection(QGroupBox):
         self._runBtn.clicked.connect(self._onRunClicked)
         self._handleBtn.clicked.connect(self._onHandleClicked)
         self._eventsTable.itemSelectionChanged.connect(self._onSelectionChanged)
+        self._eventsTable.cellDoubleClicked.connect(self._onCellDoubleClicked)
 
     # ------------------------------------------------------------------ 展示
 
@@ -557,7 +565,7 @@ class BacktestCalibrationSection(QGroupBox):
             self._showError(f"检查状态不可用：{e}")
             return
         self._renderStatus(status)
-        self._renderEvents(status.pending_events, status.ongoing_events)
+        self._renderEvents(status.pending_events, status.ongoing_events, status.handled_events)
 
     def _renderStatus(self, status: DueStatus) -> None:
         """
@@ -610,29 +618,49 @@ class BacktestCalibrationSection(QGroupBox):
         word = "快" if event.direction == "up" else "慢"
         return f"{word} {round(abs(event.peak_ratio - 1) * 100)}%"
 
-    def _renderEvents(self, pending: List, ongoing: List) -> None:
+    @staticmethod
+    def _formatEventRange(event) -> str:
         """
-        渲染事件表：待复核在前、进行中在后。
+        时间列：同年只显示「月-日 → 月-日」，跨年显示完整日期。
+
+        Args:
+            event: 事件记录。
+
+        Returns:
+            展示文本；完整日期放在单元格 tooltip 里。
+        """
+        start, end = event.start_date, event.end_date
+        if start[:4] == end[:4]:
+            return f"{start[5:]} → {end[5:]}"
+        return f"{start} → {end}"
+
+    def _renderEvents(self, pending: List, ongoing: List, handled: List) -> None:
+        """
+        渲染事件表：待确认 → 还在发生 → 最近已确认（新到旧）。
 
         Args:
             pending: 已结束、未复核的事件。
             ongoing: 仍在持续的事件（不计入到期，可提前确认）。
+            handled: 最近已确认的事件（用于回看结论）。
         """
-        self._events = list(pending) + list(ongoing)
+        self._events = list(pending) + list(ongoing) + list(reversed(handled))
         self._eventsTable.setRowCount(0)
         for event in self._events:
             row = self._eventsTable.rowCount()
             self._eventsTable.insertRow(row)
             if event.ongoing:
                 status_text = "已确认·还在发生" if event.handled_at else "还在发生"
+            elif event.handled_at:
+                status_text = "已确认"
             else:
-                status_text = "已确认" if event.handled_at else "等你确认"
+                status_text = "等你确认"
             values = [
                 EVENT_DIRECTION_LABELS.get(event.direction, event.direction),
-                f"{event.start_date} → {event.end_date}",
+                self._formatEventRange(event),
                 f"{event.days} 天",
                 self._formatChange(event),
                 status_text,
+                event.note or "—",
             ]
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
@@ -640,7 +668,11 @@ class BacktestCalibrationSection(QGroupBox):
                     item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 else:
                     item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                if event.ongoing:
+                if column == 1:
+                    item.setToolTip(f"{event.start_date} → {event.end_date}")
+                if column == 5:
+                    item.setToolTip(event.note or "")
+                if event.ongoing or event.handled_at:
                     item.setForeground(QBrush(QColor("#757575")))
                 self._eventsTable.setItem(row, column, item)
         self._handleBtn.setEnabled(False)
@@ -684,24 +716,47 @@ class BacktestCalibrationSection(QGroupBox):
         self.refresh()
 
     def _onSelectionChanged(self) -> None:
-        """事件选中状态变化：决定「确认已看过」是否可用。"""
+        """事件选中状态变化：只有未确认的记录可以填写结论。"""
         row = self._eventsTable.currentRow()
-        self._handleBtn.setEnabled(0 <= row < len(self._events))
+        enabled = 0 <= row < len(self._events) and not self._events[row].handled_at
+        self._handleBtn.setEnabled(enabled)
 
     def _onHandleClicked(self) -> None:
-        """把选中事件标记为已确认。"""
+        """弹出结论输入框，把选中事件标记为已确认。"""
         row = self._eventsTable.currentRow()
         if row < 0 or row >= len(self._events):
             return
         event = self._events[row]
+        if event.handled_at:
+            return
+        note, ok = QInputDialog.getMultiLineText(
+            self, "复核结论", "填写复核结论（可留空）：", event.note or ""
+        )
+        if not ok:
+            return
         try:
-            changed = self._service.markEventHandled(event.direction, event.start_date)
+            changed = self._service.markEventHandled(
+                event.direction, event.start_date, note
+            )
         except DatabaseError as e:
             QMessageBox.critical(self, "节奏变化", f"保存确认状态失败: {e}")
             return
         if not changed:
             QMessageBox.information(self, "节奏变化", "这条记录已确认或已不存在")
         self.refresh()
+
+    def _onCellDoubleClicked(self, row: int, column: int) -> None:
+        """
+        双击「结论」列查看全文（单元格内只显示省略后的文本）。
+
+        Args:
+            row: 行号。
+            column: 列号。
+        """
+        if column != 5 or row < 0 or row >= len(self._events):
+            return
+        note = self._events[row].note
+        QMessageBox.information(self, "复核结论", note or "（未填写结论）")
 
 
 class SettingsPanel(QWidget):
