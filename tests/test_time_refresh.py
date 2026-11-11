@@ -296,6 +296,9 @@ class _StubCommanderService:
     def getExpEfficiencyTooltip(self):
         return ""
 
+    def hasSnapshotToday(self):
+        return True
+
 
 class _StubResourceService:
     """资源卡服务桩。"""

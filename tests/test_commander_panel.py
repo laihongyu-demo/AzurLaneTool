@@ -10,6 +10,7 @@ import shutil
 import sqlite3
 import tempfile
 import unittest
+from datetime import timedelta
 from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -261,7 +262,7 @@ class _StubCommanderService:
 
     def __init__(
         self, text="-", tooltip="tip", efficiency_text="-", efficiency_tooltip="效率tip",
-        badge_text="", badge_tone="",
+        badge_text="", badge_tone="", has_today=True,
     ):
         self._text = text
         self._tooltip = tooltip
@@ -269,6 +270,7 @@ class _StubCommanderService:
         self._efficiency_tooltip = efficiency_tooltip
         self._badge_text = badge_text
         self._badge_tone = badge_tone
+        self._has_today = has_today
 
     def getCommanderLevelCardText(self):
         return self._text
@@ -284,6 +286,9 @@ class _StubCommanderService:
 
     def getExpEfficiencyTooltip(self):
         return self._efficiency_tooltip
+
+    def hasSnapshotToday(self):
+        return self._has_today
 
 
 class _StubResourceService:
@@ -327,6 +332,39 @@ class TestStatisticsCardWiring(unittest.TestCase):
         self.assertFalse(panel._cubeCard.clickable())
         self.assertFalse(panel._redGemCard.clickable())
         self.assertTrue(panel._commanderLevelCard.clickable())
+
+    def testCommanderCardShowsWatermarkWhenTodayMissing(self):
+        """今天没有记录 → 指挥官卡显示「今日未记录」水印。"""
+        panel = self._buildPanel(commander_service=_StubCommanderService(has_today=False))
+
+        self.assertEqual(panel._commanderLevelCard.watermarkText(), "今日未记录")
+        self.assertFalse(panel._commanderLevelCard._watermark.isHidden())
+
+    def testCommanderCardHidesWatermarkWhenTodayRecorded(self):
+        """今天已有记录 → 不显示水印。"""
+        panel = self._buildPanel(commander_service=_StubCommanderService(has_today=True))
+
+        self.assertEqual(panel._commanderLevelCard.watermarkText(), "")
+
+    def testErrorClearsWatermark(self):
+        """错误降级时不叠加「今日未记录」。"""
+        panel = self._buildPanel(commander_service=_StubCommanderService(has_today=False))
+
+        panel._showError("数据库错误")
+
+        self.assertEqual(panel._commanderLevelCard.watermarkText(), "")
+        self.assertEqual(panel._commanderLevelCard.value(), "错误")
+
+    def testCrossDayRefreshRecomputesWatermark(self):
+        """跨天激活时重新计算水印，不需要重启。"""
+        service = _StubCommanderService(has_today=False)
+        panel = self._buildPanel(commander_service=service)
+        panel._last_seen_date = panel._last_seen_date - timedelta(days=1)
+        service._has_today = True
+
+        panel.onActivated()
+
+        self.assertEqual(panel._commanderLevelCard.watermarkText(), "")
 
     def testRemainingLevelingCardIsClickable(self):
         """剩余练级数量卡可点击，提示文案说明会打开科技属性看板。"""

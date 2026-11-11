@@ -233,6 +233,20 @@ class CommanderService:
                 return None
             raise
 
+    def hasSnapshotToday(self) -> bool:
+        """
+        最新快照是否发生在今天（严格自然日）。
+
+        用于数据看板提醒「今天还没录入指挥官经验」；无快照或表缺失时返回 False。
+
+        Returns:
+            True 表示今天已有记录。
+        """
+        latest = self.getLatestSnapshot()
+        if latest is None:
+            return False
+        return latest.statistics_date[:10] == time_source.today().strftime("%Y-%m-%d")
+
     def getLevelRequirement(self, level: int) -> Optional[CommanderLevelExpModel]:
         """
         查询指定等级的升级经验基准（按等级缓存）。

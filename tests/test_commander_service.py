@@ -6,7 +6,8 @@
 """
 
 import unittest
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from unittest.mock import patch
 
 from models.commander_model import CommanderLevelExpModel, CommanderSnapshotModel
 from services.commander_service import CommanderService
@@ -141,6 +142,27 @@ class TestCommanderCardText(unittest.TestCase):
         service = CommanderService(repository)
 
         self.assertTrue(service.getCommanderLevelCardText().startswith("163（"))
+
+    def testHasSnapshotToday(self):
+        """最新快照落在今天 → True；昨天 → False。"""
+        repository = _StubCommanderRepository(
+            snapshots=[_snapshot(1, "2026-10-18 22:53", 163, 77057)],
+            requirements=REQUIREMENTS,
+        )
+        service = CommanderService(repository)
+
+        with patch("utils.time_source.today", return_value=date(2026, 10, 18)):
+            self.assertTrue(service.hasSnapshotToday())
+        with patch("utils.time_source.today", return_value=date(2026, 10, 19)):
+            self.assertFalse(service.hasSnapshotToday())
+
+    def testHasSnapshotTodayWithoutSnapshots(self):
+        """没有任何快照 → False。"""
+        service = CommanderService(
+            _StubCommanderRepository(snapshots=[], requirements=REQUIREMENTS)
+        )
+
+        self.assertFalse(service.hasSnapshotToday())
 
     def testTooltipShowsRemainingExpOnly(self):
         """悬停提示只补充升级还需经验与进度，不重复卡片已有数值。"""
