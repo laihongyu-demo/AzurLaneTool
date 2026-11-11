@@ -17,6 +17,7 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PyQt5.QtCore import Qt  # noqa: E402
 from PyQt5.QtGui import QFontMetrics  # noqa: E402
 from PyQt5.QtWidgets import QApplication  # noqa: E402
 
@@ -310,6 +311,59 @@ class TestBoardLayout(_CardLayoutCase):
         self.assertEqual(panel._cubeCard.badgeText(), "")
         self.assertEqual(panel._redGemCard.value(), "错误")
         self.assertEqual(panel._redGemCard.badgeText(), "")
+
+
+class TestWatermark(unittest.TestCase):
+    """卡片水印覆盖层：显示 / 清除、不改变尺寸、不拦截鼠标。"""
+
+    def testSetAndClearWatermark(self):
+        """设置后可见且铺满卡片，清除后隐藏。"""
+        card = StatCard("指挥官等级", "163")
+        card.resize(300, 120)
+        card.show()
+        APP.processEvents()
+        try:
+            card.setWatermark("今日未记录")
+
+            self.assertEqual(card.watermarkText(), "今日未记录")
+            self.assertFalse(card._watermark.isHidden())
+            self.assertTrue(card._watermark.testAttribute(Qt.WA_TransparentForMouseEvents))
+            self.assertEqual(card._watermark.geometry(), card.rect())
+
+            card.clearWatermark()
+            self.assertEqual(card.watermarkText(), "")
+            self.assertTrue(card._watermark.isHidden())
+        finally:
+            card.close()
+
+    def testWatermarkDoesNotChangeCardSize(self):
+        """水印是覆盖层，不参与布局，卡片尺寸不变。"""
+        card = StatCard("指挥官等级", "163")
+        card.resize(300, 120)
+        card.show()
+        APP.processEvents()
+        before = card.size()
+
+        card.setWatermark("今日未记录")
+        self.assertEqual(card.size(), before)
+        card.close()
+
+    def testWatermarkDoesNotBlockCardClick(self):
+        """点击水印区域仍会触发卡片的 clicked 信号。"""
+        from PyQt5.QtTest import QTest
+
+        card = StatCard("指挥官等级", "163", clickable=True)
+        card.resize(300, 120)
+        card.show()
+        APP.processEvents()
+        card.setWatermark("今日未记录")
+        clicks = []
+        card.clicked.connect(lambda: clicks.append(1))
+
+        QTest.mouseClick(card, Qt.LeftButton)
+
+        self.assertEqual(clicks, [1])
+        card.close()
 
 
 if __name__ == "__main__":

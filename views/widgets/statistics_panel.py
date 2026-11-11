@@ -228,6 +228,11 @@ class StatisticsPanel(QWidget):
 
         self.refreshDateSensitive()
         try:
+            # 跨天后「今日是否已记录」会变化：补一次指挥官卡（含水印）
+            self.updateCommanderStats()
+        except Exception:
+            self._commanderLevelCard.clearWatermark()
+        try:
             self.updateResourceStats()
         except Exception:
             self._setResourceError()
@@ -387,6 +392,7 @@ class StatisticsPanel(QWidget):
         """显示错误信息。"""
         self._commanderLevelCard.setValue("错误")
         self._commanderLevelCard.clearTitleBadge()
+        self._commanderLevelCard.clearWatermark()
         self._expEfficiencyCard.setValue("错误")
         self._setResourceError()
         self._totalCard.setValue("错误")
@@ -420,6 +426,10 @@ class StatisticsPanel(QWidget):
             self._commanderLevelCard.setTitleBadge(badge.text, badge.tone)
         else:
             self._commanderLevelCard.clearTitleBadge()
+        if self._commander_service.hasSnapshotToday():
+            self._commanderLevelCard.clearWatermark()
+        else:
+            self._commanderLevelCard.setWatermark("今日未记录")
         self._expEfficiencyCard.setValue(self._commander_service.getExpEfficiencyText())
         self._expEfficiencyCard.setToolTip(self._commander_service.getExpEfficiencyTooltip())
 

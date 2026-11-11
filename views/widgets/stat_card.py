@@ -6,8 +6,8 @@
 
 import time
 from PyQt5.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
-from PyQt5.QtCore import QSize, Qt, pyqtSignal
-from PyQt5.QtGui import QMouseEvent
+from PyQt5.QtCore import QPointF, QSize, Qt, pyqtSignal
+from PyQt5.QtGui import QColor, QMouseEvent, QPainter
 
 # 角标宽度上限：角标文案变长（↓30 → 未记录 → 数据异常）时只在自己的格子里
 # 省略，不给整行布局施压（#38）。
@@ -175,12 +175,66 @@ def _applyBadgeWidth(label: ElidedLabel, text: str, max_width: int) -> None:
     label.setMaximumWidth(max(0, min(text_width, max_width)))
 
 
+class _WatermarkOverlay(QWidget):
+    """
+    卡片水印覆盖层：斜向文字、低透明度、不拦截鼠标。
+
+    作为 StatCard 的子控件绝对定位，不参与布局，因此不会改变卡片宽高。
+    """
+
+    def __init__(self, text: str = "", parent: QWidget = None):
+        """
+        初始化水印层。
+
+        Args:
+            text: 水印文案。
+            parent: 父控件（通常为 StatCard）。
+        """
+        super().__init__(parent)
+        self._text = text or ""
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self.setVisible(False)
+
+    def setText(self, text: str) -> None:
+        """设置水印文案并重绘。"""
+        self._text = text or ""
+        self.update()
+
+    def text(self) -> str:
+        """获取当前水印文案。"""
+        return self._text
+
+    def paintEvent(self, _event) -> None:
+        """绘制斜向灰色水印。"""
+        if not self._text:
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setRenderHint(QPainter.TextAntialiasing, True)
+        painter.setOpacity(0.22)
+        font = painter.font()
+        font.setPixelSize(max(20, min(30, self.width() // 6)))
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor("#757575"))
+        painter.translate(self.width() / 2, self.height() / 2)
+        painter.rotate(-18)
+        metrics = painter.fontMetrics()
+        bounds = metrics.boundingRect(self._text)
+        painter.drawText(
+            QPointF(-bounds.width() / 2, bounds.height() / 2), self._text
+        )
+        painter.end()
+
+
 class StatCard(QWidget):
     """
     统计卡片控件。
 
     用于展示单个统计指标，包含标题和数值。
-    支持点击交互。
+    支持点击交互；可选斜向水印（如「今日未记录」），不改变布局、不拦截点击。
     """
 
     clicked = pyqtSignal()
@@ -246,6 +300,9 @@ class StatCard(QWidget):
         self._badge_tone = ""
         self._title_badge_text = ""
         self._title_badge_tone = ""
+
+        self._watermark = _WatermarkOverlay("", self)
+        self._watermark.setGeometry(self.rect())
 
         self._updateStyle()
 
@@ -400,3 +457,34 @@ class StatCard(QWidget):
     def titleBadgeTone(self) -> str:
         """获取当前标题角标配色档位；无角标时为空串。"""
         return self._title_badge_tone
+
+    def setWatermark(self, text: str) -> None:
+        """
+        设置卡片水印（如「今日未记录」）。
+
+        水印是覆盖层，不参与布局、不改变卡片尺寸；设置了
+        ``WA_TransparentForMouseEvents``，不会拦截卡片点击。
+
+        Args:
+            text: 水印文案；空串等价于清除。
+        """
+        self._watermark.setText(text)
+        self._watermark.setGeometry(self.rect())
+        self._watermark.setVisible(bool(text))
+        if text:
+            self._watermark.raise_()
+
+    def clearWatermark(self) -> None:
+        """移除水印。"""
+        self._watermark.setText("")
+        self._watermark.setVisible(False)
+
+    def watermarkText(self) -> str:
+        """获取当前水印文案；无水印时为空串。"""
+        return self._watermark.text()
+
+    def resizeEvent(self, event) -> None:
+        """卡片尺寸变化时同步覆盖层大小。"""
+        super().resizeEvent(event)
+        if hasattr(self, "_watermark"):
+            self._watermark.setGeometry(self.rect())
