@@ -1,8 +1,8 @@
 """
 科技属性看板单元测试。
 
-覆盖：Repository 按 buff_typ 汇总 buff_value、Service 补齐 9 项与缺表降级、
-窗口表格渲染与错误降级。
+覆盖：Repository 按 boost_typ × buff_typ 汇总、Service 补齐 15×9 矩阵与缺表降级、
+窗口矩阵渲染（含空组合与合计行）与错误降级。
 """
 
 import os
@@ -17,6 +17,8 @@ from PyQt5.QtWidgets import QApplication  # noqa: E402
 
 from repositories.codex_repository import CodexBuffRepository  # noqa: E402
 from services.statistics_service import (  # noqa: E402
+    CodexBuffMatrix,
+    CodexBuffMatrixCell,
     CodexBuffValueSummary,
     StatisticsService,
 )
@@ -75,121 +77,221 @@ class _TempDatabaseCase(unittest.TestCase):
 
 
 class TestCodexBuffRepository(_TempDatabaseCase):
-    """Repository 按 buff_typ 汇总测试。"""
+    """Repository 按舰种 × 属性汇总测试。"""
 
-    def testAggregatesBuffValueByBuffTyp(self):
-        """耐久 / 炮击分别汇总总属性值与已解锁属性值。"""
-        rows = CodexBuffRepository(self._db_path).getProgressByBuffTyp()
-        by_buff = {row["buff_typ"]: row for row in rows}
+    def testAggregatesByBoostTypAndBuffTyp(self):
+        """战列×耐久 / 战列×炮击分别汇总总值、已获得值与条数。"""
+        rows = CodexBuffRepository(self._db_path).getMatrixByBoostTypAndBuffTyp()
+        by_pair = {(row["boost_typ"], row["buff_typ"]): row for row in rows}
 
-        durability = by_buff["耐久"]
-        self.assertEqual(durability["total_value"], 4)
-        self.assertEqual(durability["unlocked_value"], 4)
+        durability = by_pair[("战列", "耐久")]
+        self.assertEqual(durability["total_value"], 3)
+        self.assertEqual(durability["unlocked_value"], 3)
+        self.assertEqual(durability["record_count"], 2)
 
-        gunnery = by_buff["炮击"]
+        gunnery = by_pair[("战列", "炮击")]
         self.assertEqual(gunnery["total_value"], 3)
         self.assertEqual(gunnery["unlocked_value"], 2)
+        self.assertEqual(gunnery["record_count"], 2)
 
     def testMissingTableRaisesDatabaseError(self):
         """缺表时 Repository 抛 DatabaseError，由 Service 负责降级。"""
         empty_db = os.path.join(self._temp_dir, "empty.db")
         with self.assertRaises(DatabaseError):
-            CodexBuffRepository(empty_db).getProgressByBuffTyp()
+            CodexBuffRepository(empty_db).getMatrixByBoostTypAndBuffTyp()
 
 
 class _StubBuffRepository:
-    """返回固定汇总行的仓储桩。"""
+    """返回固定矩阵行的仓储桩。"""
 
     def __init__(self, rows):
         self._rows = rows
 
-    def getProgressByBuffTyp(self):
+    def getMatrixByBoostTypAndBuffTyp(self):
         return self._rows
 
 
 class _MissingTableBuffRepository:
     """模拟旧库缺表。"""
 
-    def getProgressByBuffTyp(self):
+    def getMatrixByBoostTypAndBuffTyp(self):
         raise DatabaseError("no such table: codex_buff")
 
 
-class TestStatisticsServiceBuffSummary(unittest.TestCase):
-    """Service 补齐与降级测试。"""
+class TestStatisticsServiceBuffMatrix(unittest.TestCase):
+    """Service 15×9 补齐与降级测试。"""
 
-    def testFillsAllBuffTypsInWhitelistOrder(self):
-        """按 BUFF_TYPS 顺序返回 9 项，未知属性被忽略。"""
+    def testBuildsFullMatrixAndColumnTotals(self):
+        """按白名单顺序补齐 15×9；空组合为无记录，列合计由单元格累加。"""
         service = StatisticsService(
             buff_repository=_StubBuffRepository([
-                {"buff_typ": "耐久", "total_value": 5, "unlocked_value": 4},
-                {"buff_typ": "炮击", "total_value": 3, "unlocked_value": 2},
-                {"buff_typ": "未知属性", "total_value": 9, "unlocked_value": 9},
+                {
+                    "boost_typ": "战列",
+                    "buff_typ": "耐久",
+                    "total_value": 3,
+                    "unlocked_value": 2,
+                    "record_count": 2,
+                },
+                {
+                    "boost_typ": "风帆",
+                    "buff_typ": "机动",
+                    "total_value": 5,
+                    "unlocked_value": 0,
+                    "record_count": 5,
+                },
+                {
+                    "boost_typ": "未知舰种",
+                    "buff_typ": "未知属性",
+                    "total_value": 9,
+                    "unlocked_value": 9,
+                    "record_count": 1,
+                },
             ])
         )
 
-        result = service.getBuffStatisticsByBuffTyp()
+        matrix = service.getBuffMatrix()
 
-        self.assertEqual([item.buff_typ for item in result], options.BUFF_TYPS)
-        self.assertEqual(len(result), 9)
-        durability = next(item for item in result if item.buff_typ == "耐久")
-        self.assertEqual(durability.unlocked_value, 4)
-        self.assertEqual(durability.total_value, 5)
-        self.assertEqual(durability.completion_rate, 80.0)
-        self.assertNotIn("未知属性", [item.buff_typ for item in result])
+        self.assertEqual(matrix.boost_typs, options.BOOST_TYPS)
+        self.assertEqual(matrix.buff_typs, options.BUFF_TYPS)
+        self.assertEqual(len(matrix.cells), len(options.BOOST_TYPS) * len(options.BUFF_TYPS))
 
-    def testMissingTableDegradesToNineZeros(self):
-        """缺表时返回 9 项全 0，不抛异常。"""
+        battleship = matrix.getCell("战列", "耐久")
+        self.assertEqual(battleship.total_value, 3)
+        self.assertEqual(battleship.unlocked_value, 2)
+        self.assertEqual(battleship.record_count, 2)
+        self.assertEqual(battleship.completion_rate, 2 / 3 * 100)
+
+        empty_cell = matrix.getCell("驱逐", "航空")
+        self.assertFalse(empty_cell.has_records)
+
+        sail = matrix.getCell("风帆", "机动")
+        self.assertTrue(sail.has_records)
+        self.assertEqual(sail.unlocked_value, 0)
+
+        totals = {item.buff_typ: item for item in matrix.column_totals}
+        self.assertEqual(totals["耐久"].total_value, 3)
+        self.assertEqual(totals["耐久"].unlocked_value, 2)
+        self.assertEqual(totals["机动"].total_value, 5)
+        self.assertEqual(totals["机动"].unlocked_value, 0)
+
+    def testCompatibilitySummaryUsesColumnTotals(self):
+        """兼容接口返回矩阵列合计。"""
+        service = StatisticsService(
+            buff_repository=_StubBuffRepository([
+                {
+                    "boost_typ": "战列",
+                    "buff_typ": "耐久",
+                    "total_value": 3,
+                    "unlocked_value": 2,
+                    "record_count": 2,
+                },
+            ])
+        )
+
+        summaries = service.getBuffStatisticsByBuffTyp()
+
+        self.assertEqual([item.buff_typ for item in summaries], options.BUFF_TYPS)
+        self.assertEqual(len(summaries), 9)
+        durability = next(item for item in summaries if item.buff_typ == "耐久")
+        self.assertEqual(durability.total_value, 3)
+        self.assertEqual(durability.unlocked_value, 2)
+
+    def testMissingTableDegradesToEmptyMatrix(self):
+        """缺表时返回 15×9 全空矩阵与 9 项 0 合计。"""
         service = StatisticsService(
             buff_repository=_MissingTableBuffRepository()
         )
 
-        result = service.getBuffStatisticsByBuffTyp()
+        matrix = service.getBuffMatrix()
 
-        self.assertEqual(len(result), 9)
-        self.assertTrue(all(item.total_value == 0 for item in result))
-        self.assertTrue(all(item.completion_rate == 0 for item in result))
+        self.assertEqual(len(matrix.cells), 135)
+        self.assertTrue(all(not cell.has_records for cell in matrix.cells.values()))
+        self.assertTrue(all(item.total_value == 0 for item in matrix.column_totals))
 
 
 class _StubDialogService:
     """窗口测试用的统计服务桩。"""
 
-    def __init__(self, rows):
-        self._rows = rows
+    def __init__(self, matrix):
+        self._matrix = matrix
 
-    def getBuffStatisticsByBuffTyp(self):
-        return self._rows
+    def getBuffMatrix(self):
+        return self._matrix
 
 
 class _FailingDialogService:
     """窗口错误降级测试桩。"""
 
-    def getBuffStatisticsByBuffTyp(self):
+    def getBuffMatrix(self):
         raise DatabaseError("no such table: codex_buff")
 
 
-class TestCodexBuffDialog(unittest.TestCase):
-    """窗口渲染与错误降级测试。"""
+def _buildMatrix() -> CodexBuffMatrix:
+    """构造 15×9 测试矩阵，含一个正常格、一个 0 解锁格与空组合。"""
+    boost_typs = list(options.BOOST_TYPS)
+    buff_typs = list(options.BUFF_TYPS)
+    cells = {
+        (boost_typ, buff_typ): CodexBuffMatrixCell(boost_typ, buff_typ)
+        for boost_typ in boost_typs
+        for buff_typ in buff_typs
+    }
+    cells[("驱逐", "耐久")] = CodexBuffMatrixCell(
+        "驱逐", "耐久", total_value=258, unlocked_value=238, record_count=247
+    )
+    cells[("风帆", "机动")] = CodexBuffMatrixCell(
+        "风帆", "机动", total_value=5, unlocked_value=0, record_count=5
+    )
+    cells[("维修", "耐久")] = CodexBuffMatrixCell(
+        "维修", "耐久", total_value=6, unlocked_value=6, record_count=6
+    )
 
-    def _summaries(self):
-        rows = [CodexBuffValueSummary(buff_typ=buff_typ) for buff_typ in options.BUFF_TYPS]
-        rows[0] = CodexBuffValueSummary(
-            buff_typ="耐久",
-            total_value=5,
-            unlocked_value=4,
+    totals = []
+    for buff_typ in buff_typs:
+        totals.append(
+            CodexBuffValueSummary(
+                buff_typ=buff_typ,
+                total_value=sum(cells[(boost_typ, buff_typ)].total_value for boost_typ in boost_typs),
+                unlocked_value=sum(cells[(boost_typ, buff_typ)].unlocked_value for boost_typ in boost_typs),
+            )
         )
-        return rows
+    return CodexBuffMatrix(
+        boost_typs=boost_typs,
+        buff_typs=buff_typs,
+        cells=cells,
+        column_totals=totals,
+    )
 
-    def testRendersNineRowsAndValueColumns(self):
-        """窗口固定渲染 9 行，主值为已获得汇总值。"""
-        dialog = CodexBuffDialog(_StubDialogService(self._summaries()))
 
-        self.assertEqual(dialog._table.rowCount(), 9)
-        self.assertEqual(dialog._table.columnCount(), 4)
-        self.assertEqual(dialog._table.item(0, 0).text(), "耐久")
-        self.assertEqual(dialog._table.item(0, 1).text(), "4")
-        self.assertEqual(dialog._table.item(0, 2).text(), "5")
-        self.assertEqual(dialog._table.item(0, 3).text(), "80.0%")
-        self.assertIn("已获得汇总值 4 / 总汇总值 5", dialog._table.item(0, 0).toolTip())
+class TestCodexBuffDialog(unittest.TestCase):
+    """窗口矩阵渲染与错误降级测试。"""
+
+    def testRendersMatrixEmptyCellsAndTotalRow(self):
+        """窗口为 16 行 × 10 列，空组合 —，底部合计行按属性汇总。"""
+        dialog = CodexBuffDialog(_StubDialogService(_buildMatrix()))
+
+        self.assertEqual(dialog._table.rowCount(), 16)
+        self.assertEqual(dialog._table.columnCount(), 10)
+        self.assertEqual(dialog._table.item(0, 0).text(), "驱逐")
+        self.assertEqual(dialog._table.item(0, 1).text(), "238/258")
+        self.assertIn("247 条记录", dialog._table.item(0, 1).toolTip())
+
+        aviation_column = 1 + options.BUFF_TYPS.index("航空")
+        self.assertEqual(dialog._table.item(0, aviation_column).text(), "—")
+
+        sail_row = options.BOOST_TYPS.index("风帆")
+        mobility_column = 1 + options.BUFF_TYPS.index("机动")
+        self.assertEqual(dialog._table.item(sail_row, mobility_column).text(), "0/5")
+
+        maintenance_row = options.BOOST_TYPS.index("维修")
+        completed_item = dialog._table.item(maintenance_row, 1)
+        self.assertEqual(completed_item.text(), "6/6")
+        self.assertEqual(completed_item.background().color().name(), "#e8f5e9")
+        self.assertIn("已完成", completed_item.toolTip())
+
+        self.assertEqual(dialog._table.item(15, 0).text(), "合计")
+        self.assertEqual(dialog._table.item(15, 1).text(), "244/264")
+        self.assertEqual(dialog._table.item(15, mobility_column).text(), "0/5")
+        self.assertIn("3 个组合有记录", dialog._statusLabel.text())
 
     def testDatabaseErrorRendersMessageWithoutModal(self):
         """缺表时表格清空并显示错误文案，不弹模态框。"""

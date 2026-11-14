@@ -5,7 +5,7 @@
 """
 
 from dataclasses import dataclass
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
 from repositories.codex_repository import (
     CodexBuffRepository,
@@ -38,6 +38,74 @@ class CodexBuffValueSummary:
         if self.total_value <= 0:
             return 0.0
         return self.unlocked_value / self.total_value * 100
+
+
+@dataclass(frozen=True)
+class CodexBuffMatrixCell:
+    """
+    舰种 × Buff 属性交叉单元格。
+
+    Attributes:
+        boost_typ: 增益目标舰种。
+        buff_typ: Buff 属性类型。
+        total_value: 该组合下所有记录的 buff_value 合计。
+        unlocked_value: 已解锁记录的 buff_value 合计。
+        record_count: 该组合的记录条数；用于区分「无记录」与「有记录但未解锁」。
+    """
+
+    boost_typ: str
+    buff_typ: str
+    total_value: int = 0
+    unlocked_value: int = 0
+    record_count: int = 0
+
+    @property
+    def has_records(self) -> bool:
+        """该组合是否存在 codex_buff 记录。"""
+        return self.record_count > 0
+
+    @property
+    def is_completed(self) -> bool:
+        """该组合是否已全部解锁（总值为正且已获得不少于总）。"""
+        return self.total_value > 0 and self.unlocked_value >= self.total_value
+
+    @property
+    def completion_rate(self) -> float:
+        """按 buff_value 汇总值计算的完成率（0–100）。"""
+        if self.total_value <= 0:
+            return 0.0
+        return self.unlocked_value / self.total_value * 100
+
+
+@dataclass(frozen=True)
+class CodexBuffMatrix:
+    """
+    科技属性矩阵：15 个舰种 × 9 个 Buff 属性。
+
+    Attributes:
+        boost_typs: 舰种顺序（BOOST_TYPS）。
+        buff_typs: 属性顺序（BUFF_TYPS）。
+        cells: 以 ``(boost_typ, buff_typ)`` 为键的单元格。
+        column_totals: 按 buff_typ 汇总的列合计，顺序与 buff_typs 一致。
+    """
+
+    boost_typs: List[str]
+    buff_typs: List[str]
+    cells: Dict[Tuple[str, str], CodexBuffMatrixCell]
+    column_totals: List[CodexBuffValueSummary]
+
+    def getCell(self, boost_typ: str, buff_typ: str) -> CodexBuffMatrixCell:
+        """
+        获取指定舰种 × 属性单元格。
+
+        Args:
+            boost_typ: 增益目标舰种。
+            buff_typ: Buff 属性类型。
+
+        Returns:
+            对应单元格；不存在时由 Service 保证已补齐为全 0。
+        """
+        return self.cells[(boost_typ, buff_typ)]
 
 
 class StatisticsService:
@@ -121,39 +189,75 @@ class StatisticsService:
             "completion_rate": completion_rate
         }
 
-    def getBuffStatisticsByBuffTyp(self) -> List[CodexBuffValueSummary]:
+    def getBuffMatrix(self) -> CodexBuffMatrix:
         """
-        获取科技属性按 buff_typ 汇总的 buff_value。
+        获取科技属性按舰种 × Buff 属性汇总的矩阵。
 
-        按 ``options.BUFF_TYPS`` 白名单顺序补齐 9 项；某属性没有记录时返回全 0，
-        保证窗口行数稳定。缺表 / 缺列时降级为 9 项全 0，不把数据库异常抛到界面。
+        一次读取 15×9 组合，按 ``BOOST_TYPS`` / ``BUFF_TYPS`` 顺序补齐空单元格；
+        列合计由单元格累加，不额外查询。缺表 / 缺列时返回全空矩阵。
 
         Returns:
-            ``CodexBuffValueSummary`` 列表，顺序与 ``BUFF_TYPS`` 一致。
+            ``CodexBuffMatrix``，包含 15×9 单元格与 9 项列合计。
         """
         try:
-            rows = self._buff_repository.getProgressByBuffTyp()
+            rows = self._buff_repository.getMatrixByBoostTypAndBuffTyp()
         except DatabaseError as e:
             if isMissingTableError(e) or isMissingColumnError(e):
                 rows = []
             else:
                 raise
 
-        rows_by_buff = {
-            str(row.get("buff_typ") or ""): row
+        rows_by_pair = {
+            (str(row.get("boost_typ") or ""), str(row.get("buff_typ") or "")): row
             for row in rows
         }
-        result: List[CodexBuffValueSummary] = []
-        for buff_typ in options.BUFF_TYPS:
-            row = rows_by_buff.get(buff_typ, {})
-            result.append(
-                CodexBuffValueSummary(
+
+        boost_typs = list(options.BOOST_TYPS)
+        buff_typs = list(options.BUFF_TYPS)
+        cells: Dict[Tuple[str, str], CodexBuffMatrixCell] = {}
+        for boost_typ in boost_typs:
+            for buff_typ in buff_typs:
+                row = rows_by_pair.get((boost_typ, buff_typ), {})
+                cells[(boost_typ, buff_typ)] = CodexBuffMatrixCell(
+                    boost_typ=boost_typ,
                     buff_typ=buff_typ,
                     total_value=int(row.get("total_value") or 0),
                     unlocked_value=int(row.get("unlocked_value") or 0),
+                    record_count=int(row.get("record_count") or 0),
+                )
+
+        column_totals = []
+        for buff_typ in buff_typs:
+            total_value = sum(
+                cells[(boost_typ, buff_typ)].total_value for boost_typ in boost_typs
+            )
+            unlocked_value = sum(
+                cells[(boost_typ, buff_typ)].unlocked_value for boost_typ in boost_typs
+            )
+            column_totals.append(
+                CodexBuffValueSummary(
+                    buff_typ=buff_typ,
+                    total_value=total_value,
+                    unlocked_value=unlocked_value,
                 )
             )
-        return result
+
+        return CodexBuffMatrix(
+            boost_typs=boost_typs,
+            buff_typs=buff_typs,
+            cells=cells,
+            column_totals=column_totals,
+        )
+
+    def getBuffStatisticsByBuffTyp(self) -> List[CodexBuffValueSummary]:
+        """
+        获取按 Buff 属性类型汇总的列合计（兼容接口）。
+
+        Returns:
+            ``CodexBuffValueSummary`` 列表，等价于 :meth:`getBuffMatrix`
+            的 ``column_totals``。
+        """
+        return self.getBuffMatrix().column_totals
 
     def getBulinRequirements(self) -> Dict[str, Any]:
         """
