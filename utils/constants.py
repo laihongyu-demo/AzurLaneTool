@@ -29,9 +29,26 @@ def _resolveBaseDir() -> str:
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def _resolveDataDir() -> str:
+    """
+    解析可写的用户数据目录。
+
+    源码运行使用项目根目录的 ``data/``；PyInstaller 单文件运行（``frozen``）时
+    ``BASE_DIR`` 指向临时解压目录（``_MEIPASS``），进程退出即删除，因此数据库、
+    ``user.json`` 等用户数据改放 exe 同目录的 ``data/``，保证首次创建的库能留存。
+
+    Returns:
+        数据目录的绝对路径。
+    """
+    if getattr(sys, 'frozen', False):
+        exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+        return os.path.join(exe_dir, 'data')
+    return os.path.join(BASE_DIR, 'data')
+
+
 BASE_DIR = _resolveBaseDir()
 SQL_DIR = os.path.join(BASE_DIR, 'sql')
-DATA_DIR = os.path.join(BASE_DIR, 'data')
+DATA_DIR = _resolveDataDir()
 ASSETS_DIR = os.path.join(BASE_DIR, 'assets')
 ICON_DIR = os.path.join(ASSETS_DIR, 'icon')
 APP_ICON_PATH = os.path.join(ICON_DIR, '250px-Manjuu_logo1.ico')

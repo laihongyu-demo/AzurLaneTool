@@ -1,10 +1,13 @@
 """
 数据库表结构引导模块。
 
-负责在应用启动时确保资源统计 / 任务看板 / 贸易许可证相关表存在（幂等 DDL），
-把早期版本的表结构就地升级到当前口径（明细精确到秒），并为历史图鉴表
-``codex_group`` 补齐舰队位置列并按舰种回填，同时提供"表 / 列不存在"
+负责在应用启动时确保资源统计 / 任务看板 / 贸易许可证 / 活动记录 / 图鉴 / 指挥官
+相关表存在（幂等 DDL），把早期版本的表结构就地升级到当前口径（明细精确到秒），
+并为历史图鉴表 ``codex_group`` 补齐舰队位置列并按舰种回填，同时提供"表 / 列不存在"
 异常的识别辅助。
+
+首次使用的完整初始化（建库文件、种子数据、``user.json``）由
+:func:`utils.db_bootstrap.ensureDatabaseReady` 编排。
 """
 
 import sqlite3
@@ -19,9 +22,12 @@ RESOURCE_SCHEMA_FILE = "CreateResourceStatisticsTables.sql"
 CUBE_TASK_SCHEMA_FILE = "CreateCubeTaskTables.sql"
 TRADE_LICENSE_SCHEMA_FILE = "CreateTradeLicenseTable.sql"
 EVENT_SCHEMA_FILE = "CreateEventRecordTable.sql"
+CODEX_SCHEMA_FILE = "CreateCodexTables.sql"
+COMMANDER_SCHEMA_FILE = "CreateCommanderTable.sql"
 CATEGORY_SEED_FILE = "SeedResourceCategories.sql"
 
-# 历史图鉴表：由图鉴导入维护，应用只做「按需补列 + 回填」，不建表
+# 历史图鉴表：早期由图鉴导入维护；首次建库（#8）由 CreateCodexTables.sql 建空表，
+# 已有库只做「按需补列 + 回填」
 CODEX_GROUP_TABLE = "codex_group"
 # 该触发器会在 codex_group 任意 UPDATE 后把 date_edit 改为当前时间
 CODEX_GROUP_MODTIME_TRIGGER = "update_codex_group_modtime"
@@ -84,32 +90,90 @@ def ensureResourceStatisticsSchema(db_path: Optional[str] = None) -> None:
         _backfillLastRecordTime(conn)
 
 
+def ensureCodexSchema(db_path: Optional[str] = None) -> None:
+    """
+    确保图鉴相关表（``codex_group`` / ``codex_tp`` / ``codex_buff`` /
+    ``awakening_of_mind``）存在并具备当前列结构。
+
+    首次使用（#8）没有数据库时，由 ``sql/CreateCodexTables.sql`` 建出空表，
+    让舰娘管理、解锁、觉醒、誓约等页签可用；已有库只执行 ``IF NOT EXISTS``，
+    不会改写任何图鉴数据。随后按旧库口径补齐 ``fleet_position`` 列并回填。
+
+    可重复调用。
+
+    Args:
+        db_path: 可选的数据库路径，默认使用全局配置。
+
+    Raises:
+        DatabaseError: 当 SQL 文件缺失或执行失败时抛出。
+    """
+    codex_sql = loadSqlFile(CODEX_SCHEMA_FILE)
+    path = db_path or DatabaseConnection.getDbPath()
+    with DatabaseContext(path) as conn:
+        conn.executescript(codex_sql)
+        _ensureCodexGroupColumns(conn)
+
+
 def ensureCodexGroupSchema(db_path: Optional[str] = None) -> None:
     """
     确保 ``codex_group`` 具备 ``fleet_position``（舰队位置）列，并按舰种回填。
 
-    ``codex_group`` 是历史图鉴表，应用不负责建表；这里只做两件事：
+    ``codex_group`` 是历史图鉴表，这里只做两件事：
 
     1. 缺列时 ``ALTER TABLE`` 补列（``fleet_position`` 允许为空，不打断旧库写入）；
     2. 按 :data:`utils.codex_options.SHIP_TYP_FLEET_POSITION` 回填空值。
 
     回填只填空值，不会覆盖已有结果，因此可重复执行；表不存在时直接跳过。
+    首次建表请用 :func:`ensureCodexSchema`。
 
     Args:
         db_path: 可选的数据库路径，默认使用全局配置。
     """
     path = db_path or DatabaseConnection.getDbPath()
     with DatabaseContext(path) as conn:
-        columns = _tableColumns(conn, CODEX_GROUP_TABLE)
-        if not columns:
-            return
-        if "fleet_position" not in columns:
-            conn.execute(
-                f"ALTER TABLE {CODEX_GROUP_TABLE} ADD COLUMN fleet_position STRING(32)"
-            )
-        # 回填会 UPDATE 全部行，必须避开 date_edit 触发器，否则历史编辑时间被刷成本次运行时间
-        with suspendCodexGroupModtimeTrigger(conn):
-            _backfillFleetPosition(conn)
+        _ensureCodexGroupColumns(conn)
+
+
+def ensureCommanderSchema(db_path: Optional[str] = None) -> None:
+    """
+    确保指挥官快照表 ``commander_info`` 及其唯一索引存在。
+
+    首次使用（#8）由 ``sql/CreateCommanderTable.sql`` 建空表；已有库只执行
+    ``IF NOT EXISTS``，不会改动历史快照。等级经验基准 ``commander_level_exp``
+    由 :func:`ensureResourceStatisticsSchema` 负责建表，种子数据由
+    :func:`utils.db_bootstrap.ensureDatabaseReady` 写入。
+
+    Args:
+        db_path: 可选的数据库路径，默认使用全局配置。
+
+    Raises:
+        DatabaseError: 当 SQL 文件缺失或执行失败时抛出。
+    """
+    commander_sql = loadSqlFile(COMMANDER_SCHEMA_FILE)
+    path = db_path or DatabaseConnection.getDbPath()
+    with DatabaseContext(path) as conn:
+        conn.executescript(commander_sql)
+
+
+def _ensureCodexGroupColumns(conn: sqlite3.Connection) -> None:
+    """
+    给已存在的 ``codex_group`` 补 ``fleet_position`` 列并按舰种回填。
+
+    表不存在时直接跳过（首次建库由 SQL 脚本负责）。回填只填空值，保留人工结果。
+
+    Args:
+        conn: 数据库连接（调用方负责事务）。
+    """
+    columns = _tableColumns(conn, CODEX_GROUP_TABLE)
+    if not columns:
+        return
+    if "fleet_position" not in columns:
+        conn.execute(
+            f"ALTER TABLE {CODEX_GROUP_TABLE} ADD COLUMN fleet_position STRING(32)"
+        )
+    # 回填会 UPDATE 全部行，必须避开 date_edit 触发器，否则历史编辑时间被刷成本次运行时间
+    with suspendCodexGroupModtimeTrigger(conn):
+        _backfillFleetPosition(conn)
 
 
 @contextmanager
