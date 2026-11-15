@@ -27,6 +27,9 @@ a = Analysis(
         'PyQt5.QtCore',
         'PyQt5.QtGui',
         'PyQt5.QtWidgets',
+        # 数据分析页签（#19）：matplotlib 的 Qt 后端按需导入，显式声明避免被裁剪
+        'matplotlib.backends.backend_qt5agg',
+        'numpy',
     ],
     hookspath=[],
     hooksconfig={},
