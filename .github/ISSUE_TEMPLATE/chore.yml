@@ -1,0 +1,50 @@
+name: "杂项 / 构建"
+description: "构建、依赖、配置、重构、清理等不直接改变业务行为的任务。"
+title: "[杂项] "
+labels: ["chore"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        只做一件事；涉及行为变化请改用「功能 / 改进」或「缺陷报告」模板。
+
+  - type: textarea
+    id: background
+    attributes:
+      label: "背景 / 范围"
+      description: "为什么做、涉及哪些文件/命令/依赖，明确不做什么。"
+    validations:
+      required: true
+
+  - type: textarea
+    id: plan
+    attributes:
+      label: "方案 / 风险 / 回滚"
+      description: "执行步骤、影响面、失败时如何恢复；涉及依赖升级请说明版本与理由。"
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: "验收标准"
+      description: "命令、构建结果、测试结果或文件状态。"
+      value: |
+        - [ ] ...
+        - [ ] 全量测试通过
+    validations:
+      required: true
+
+  - type: input
+    id: related
+    attributes:
+      label: "关联"
+      description: "相关 issue / PR / docs。"
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: "提交前检查"
+      options:
+        - label: "我已搜索过同题 issue"
+          required: true

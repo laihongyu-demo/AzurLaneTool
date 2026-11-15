@@ -14,7 +14,9 @@ from PyQt5.QtCore import Qt, pyqtSignal
 
 from models.codex_model import CodexGroupModel
 from services.limit_break_service import LimitBreakService, LimitBreakResult
+from views.widgets.panel_notice import PanelNoticeLabel
 from views.widgets.searchable_combo_box import SearchableComboBox
+from utils.error_messages import describeDataLoadError
 from utils.exceptions import DatabaseError, ValidationError
 
 
@@ -48,6 +50,10 @@ class LimitBreakPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(15)
+
+        # 读库失败时就地提示：构造期弹模态框会阻塞主窗口构建（#28）
+        self._notice = PanelNoticeLabel(self)
+        layout.addWidget(self._notice)
 
         limit_break_group = QGroupBox("界限突破")
         limit_break_layout = QVBoxLayout(limit_break_group)
@@ -148,7 +154,8 @@ class LimitBreakPanel(QWidget):
             result = self._limit_break_service.limitBreak(ship.codex_id)
             self.limitBreakResult.emit(result)
             if result.success:
-                self.refreshData()
+                # 保留选中的舰娘，便于连续升星；升到满星后该舰娘不在列表中，自然清空
+                self.refreshData(select_codex_id=ship.codex_id)
                 self.dataRefreshed.emit()
         except ValidationError as e:
             error_result = LimitBreakResult(success=False, message=str(e))
@@ -182,6 +189,7 @@ class LimitBreakPanel(QWidget):
             result = self._limit_break_service.limitBreakMax(ship.codex_id)
             self.limitBreakResult.emit(result)
             if result.success:
+                # MAX 后该舰娘已达满星、不再属于可突破列表，刷新后自然清空选择
                 self.refreshData()
                 self.dataRefreshed.emit()
         except ValidationError as e:
@@ -198,8 +206,38 @@ class LimitBreakPanel(QWidget):
         """刷新按钮点击事件处理。"""
         self.refreshData()
 
-    def refreshData(self) -> None:
-        """刷新界面数据。"""
+    def _selectShipByCodexId(self, codex_id) -> bool:
+        """
+        按图鉴ID选中舰娘，并同步刷新信息区与按钮状态。
+
+        SearchableComboBox.setCurrentIndex() 不会发出 currentIndexChanged，
+        因此这里需要显式调用选择处理逻辑。
+
+        Args:
+            codex_id: 图鉴ID。
+
+        Returns:
+            选中成功返回 True，该舰娘已不在列表中返回 False。
+        """
+        target = str(codex_id)
+        for index, ship in enumerate(self._limit_breakable_ships):
+            if str(ship.codex_id) == target:
+                self._shipComboBox.setCurrentIndex(index)
+                self._onShipSelected(index)
+                return True
+
+        return False
+
+    def refreshData(self, select_codex_id=None) -> None:
+        """
+        刷新界面数据。
+
+        读取失败时在面板内提示而不是弹模态框：本方法在构造期就会被调用，
+        空库 / 缺表时不能阻塞主窗口构建（#28）。
+
+        Args:
+            select_codex_id: 可选，刷新后需要保留选中的图鉴ID。
+        """
         self._shipComboBox.clear()
         self._limit_breakable_ships = []
         self._clearShipInfo()
@@ -213,7 +251,12 @@ class LimitBreakPanel(QWidget):
                 display_name = str(ship.ship_name) if ship.ship_name is not None else ""
                 self._shipComboBox.addItem(display_name, ship.codex_id)
 
+            if select_codex_id is not None:
+                self._selectShipByCodexId(select_codex_id)
+
         except DatabaseError as e:
-            QMessageBox.critical(self, "数据库错误", f"加载数据失败: {e}")
+            self._notice.showError(describeDataLoadError(e))
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"刷新数据失败: {e}")
+            self._notice.showError(f"刷新数据失败：{e}")
+        else:
+            self._notice.clearError()

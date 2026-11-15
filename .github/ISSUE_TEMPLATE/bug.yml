@@ -1,0 +1,106 @@
+name: "缺陷报告"
+description: "报告可复现的缺陷、异常行为或数据错误。"
+title: "[缺陷] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提交前请先搜索同题 issue，并尽量给出可复现步骤、期望/实际结果和证据。
+        日志、截图、数据库样本请先脱敏；不要贴令牌、个人路径或整库数据。
+
+  - type: textarea
+    id: symptom
+    attributes:
+      label: "现象"
+      description: "发生了什么？用一句话概括，再补充关键细节。"
+      placeholder: "例如：跨天后资源卡角标仍显示昨天 vs 前天。"
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: "复现步骤"
+      description: "从启动/打开哪个页面开始，逐步写出可重复的操作。"
+      placeholder: |
+        1. 打开「数据看板」
+        2. 不录入今天的数据，跨天或重启
+        3. 观察魔方/红尖尖角标
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: "期望行为"
+      description: "按当前规范/口径，应该发生什么。"
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: "实际行为 / 错误信息"
+      description: "贴完整报错、日志或截图链接；不要只写“不行”“有 bug”。"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: "环境与数据"
+      description: "分支/commit、Python/PyQt5 版本、数据库来源与行数、是否旧库、是否跨天。"
+      placeholder: |
+        - 分支/commit:
+        - Python / PyQt5:
+        - 数据库/数据量:
+        - 是否旧库:
+        - 是否跨天/长时间运行:
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: "影响面"
+      description: "可多选；影响数据正确性的问题优先。"
+      options:
+        - label: "数据正确性（写错/算错/丢数据）"
+        - label: "界面/交互"
+        - label: "性能"
+        - label: "仅文档/提示"
+        - label: "不确定"
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: "证据"
+      description: "文件:行号、SQL、查询结果、日志、截图、相关 issue/文档链接。"
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: "验收标准"
+      description: "写成可勾选的条目；修复后逐项核对。"
+      value: |
+        - [ ] ...
+        - [ ] 全量测试通过
+    validations:
+      required: true
+
+  - type: input
+    id: related
+    attributes:
+      label: "关联"
+      description: "相关 issue / PR / docs，例如 #24、docs/时间刷新方案_20261019.md。"
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: "提交前检查"
+      options:
+        - label: "我已搜索过同题 issue"
+          required: true
+        - label: "我已脱敏日志/截图/数据"
+          required: true

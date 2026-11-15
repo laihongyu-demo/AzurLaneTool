@@ -9,6 +9,7 @@ import os
 from typing import Optional
 
 from models.user_model import UserModel
+from utils.constants import DATA_DIR
 from utils.exceptions import DatabaseError
 
 
@@ -24,11 +25,11 @@ class UserRepository:
         初始化用户数据访问。
 
         Args:
-            file_path: user.json文件路径，默认为data/user.json。
+            file_path: user.json文件路径，默认为数据目录下的 user.json
+                （源码运行为项目 ``data/``，打包后为 exe 同目录 ``data/``）。
         """
         if file_path is None:
-            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            file_path = os.path.join(base_dir, "data", "user.json")
+            file_path = os.path.join(DATA_DIR, "user.json")
         self._filePath = file_path
 
     def loadUser(self) -> Optional[UserModel]:

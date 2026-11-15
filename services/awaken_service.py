@@ -14,6 +14,7 @@ from repositories.codex_repository import (
 )
 from utils.db_connection import DatabaseContext
 from utils.exceptions import DatabaseError, ValidationError
+from utils.unit_formatter import formatExact
 
 
 AWAKEN_LEVELS = [
@@ -23,7 +24,7 @@ AWAKEN_LEVELS = [
     "认知觉醒三阶",
     "认知觉醒四阶",
     "认知觉醒五阶",
-    "认知觉醒Ⅱ",
+    "认知觉醒II",
 ]
 
 
@@ -39,6 +40,9 @@ class AwakenResult:
         new_level: 新觉醒等级。
         tp_value: 科技点增加值。
         buff_details: Buff详情列表。
+        expend_gc: 本次觉醒消耗的物资。
+        expend_limit: 本次觉醒消耗的心智单元。
+        expend_limit2: 本次觉醒消耗的心智单元Ⅱ。
         message: 结果消息。
     """
     success: bool
@@ -47,6 +51,9 @@ class AwakenResult:
     new_level: str = ""
     tp_value: int = 0
     buff_details: List[Dict] = None
+    expend_gc: int = 0
+    expend_limit: int = 0
+    expend_limit2: int = 0
     message: str = ""
 
     def __post_init__(self):
@@ -54,7 +61,7 @@ class AwakenResult:
             self.buff_details = []
 
     def toStatusBarMessage(self) -> str:
-        """生成statusBar显示消息。"""
+        """生成statusBar显示消息（材料消耗不换算，带千分符）。"""
         if not self.success:
             return self.message
 
@@ -75,7 +82,29 @@ class AwakenResult:
             if buff_parts:
                 parts.append(" ".join(buff_parts))
 
+        parts.append(self.formatConsume())
+
         return " | ".join(parts)
+
+    def formatConsume(self) -> str:
+        """
+        生成本次觉醒的材料消耗文本。
+
+        Returns:
+            形如 ``本次消耗：物资 2,000 / 心智单元 200``；
+            三项均为 0 时返回 ``本次消耗：无``（如四阶→五阶只需经验）。
+        """
+        items = []
+        if self.expend_gc:
+            items.append(f"物资 {formatExact(self.expend_gc)}")
+        if self.expend_limit:
+            items.append(f"心智单元 {formatExact(self.expend_limit)}")
+        if self.expend_limit2:
+            items.append(f"心智单元Ⅱ {formatExact(self.expend_limit2)}")
+
+        if not items:
+            return "本次消耗：无"
+        return "本次消耗：" + " / ".join(items)
 
 
 class AwakenService:
@@ -183,7 +212,7 @@ class AwakenService:
                 message=f"舰娘 '{ship.ship_name}' 尚未解锁"
             )
 
-        if ship.ship_level == "认知觉醒Ⅱ":
+        if ship.ship_level == "认知觉醒II":
             return AwakenResult(
                 success=False,
                 ship_name=ship.ship_name,
@@ -199,6 +228,7 @@ class AwakenService:
             )
 
         update_lv120 = (new_level == "认知觉醒五阶")
+        consume = self._getConsumeMaterials(codex_id, ship.ship_level, new_level)
 
         try:
             with DatabaseContext(self._group_repository.dbPath) as conn:
@@ -218,10 +248,33 @@ class AwakenService:
                 new_level=new_level,
                 tp_value=tp_value,
                 buff_details=buff_details,
+                expend_gc=consume["expend_gc"],
+                expend_limit=consume["expend_limit"],
+                expend_limit2=consume["expend_limit2"],
                 message=f"舰娘 '{ship.ship_name}' 觉醒成功"
             )
         except sqlite3.Error as e:
             raise DatabaseError(f"觉醒操作失败: {e}")
+
+    def _getConsumeMaterials(self, codex_id, from_level: str, to_level: str) -> Dict[str, int]:
+        """
+        查询本次觉醒消耗的材料。
+
+        材料基准数据缺失（如旧库没有 awakening_of_mind 表）时返回全 0，
+        不影响觉醒主流程。
+
+        Args:
+            codex_id: 图鉴ID。
+            from_level: 觉醒前等级。
+            to_level: 觉醒后等级。
+
+        Returns:
+            包含expend_gc、expend_limit、expend_limit2的字典。
+        """
+        try:
+            return self._group_repository.calculateAwakenConsume(codex_id, from_level, to_level)
+        except DatabaseError:
+            return {"expend_gc": 0, "expend_limit": 0, "expend_limit2": 0}
 
     def _updateShipLevel(self, conn: sqlite3.Connection, codex_id: str, ship_level: str) -> int:
         """更新舰娘觉醒等级。"""

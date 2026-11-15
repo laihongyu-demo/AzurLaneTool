@@ -1,4 +1,4 @@
-# DataInsight - 环境依赖配置
+# AzurLaneTool - 环境依赖配置
 # Python >= 3.8
 
 # GUI 框架
@@ -7,9 +7,9 @@ PyQt5>=5.15.0
 # 数据库
 # SQLite 为 Python 内置模块，无需额外安装
 
-# 数据可视化（可选，按需启用）
+# 数据可视化（数据分析页签使用 matplotlib；QtChart 为备选，未启用）
 # PyQtChart>=5.15.0
-# matplotlib>=3.5.0
+matplotlib>=3.5.0
 
 # 开发工具
 flake8>=5.0.0

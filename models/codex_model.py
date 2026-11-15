@@ -29,6 +29,7 @@ class CodexGroupModel(BaseModel):
         oath_status: 誓约状态。
         codex_unlock: 图鉴解锁状态。
         date_edit: 编辑日期。
+        fleet_position: 舰队位置（前排先锋 / 后排主力 / 水下舰队，由 ship_typ 派生）。
     """
 
     codex_id: str = ""
@@ -44,6 +45,7 @@ class CodexGroupModel(BaseModel):
     oath_status: str = "N"
     codex_unlock: str = "N"
     date_edit: Optional[str] = None
+    fleet_position: str = ""
 
     def __post_init__(self):
         """初始化后处理，确保字段类型正确。"""
