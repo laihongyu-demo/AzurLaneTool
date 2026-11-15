@@ -14,7 +14,9 @@ from PyQt5.QtCore import Qt, pyqtSignal
 
 from models.codex_model import CodexGroupModel
 from services.codex_oath_service import CodexOathService, OathResult
+from views.widgets.panel_notice import PanelNoticeLabel
 from views.widgets.searchable_combo_box import SearchableComboBox
+from utils.error_messages import describeDataLoadError
 from utils.exceptions import DatabaseError, ValidationError
 
 
@@ -48,6 +50,10 @@ class CodexOathPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(15)
+
+        # 读库失败时就地提示：构造期弹模态框会阻塞主窗口构建（#28）
+        self._notice = PanelNoticeLabel(self)
+        layout.addWidget(self._notice)
 
         oath_group = QGroupBox("舰娘誓约")
         oath_layout = QVBoxLayout(oath_group)
@@ -157,7 +163,12 @@ class CodexOathPanel(QWidget):
         self.refreshData()
 
     def refreshData(self) -> None:
-        """刷新界面数据。"""
+        """
+        刷新界面数据。
+
+        读取失败时在面板内提示而不是弹模态框：本方法在构造期就会被调用，
+        空库 / 缺表时不能阻塞主窗口构建（#28）。
+        """
         self._shipComboBox.clear()
         self._oathable_ships = []
         self._clearShipInfo()
@@ -171,6 +182,8 @@ class CodexOathPanel(QWidget):
                 self._shipComboBox.addItem(display_name, ship.codex_id)
 
         except DatabaseError as e:
-            QMessageBox.critical(self, "数据库错误", f"加载数据失败: {e}")
+            self._notice.showError(describeDataLoadError(e))
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"刷新数据失败: {e}")
+            self._notice.showError(f"刷新数据失败：{e}")
+        else:
+            self._notice.clearError()
