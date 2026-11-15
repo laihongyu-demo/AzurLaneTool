@@ -233,3 +233,50 @@ MAX_EVENT_STATUS_LENGTH = 20
 MAX_EVENT_STATUS_NOTE_LENGTH = 200
 MAX_EVENT_NOTE_LENGTH = 200
 MAX_EVENT_BUILD_COUNT = 100_000
+
+# ---- 数据分析看板（#19）----
+#
+# 口径见 docs/20261114_资源分析看板方案.md。图表全部只读，不写任何表。
+
+# 类目占比：月度堆叠只展示金额前 N 的类目，其余合并为「其他」
+ANALYSIS_TOP_CATEGORY_COUNT = 8
+
+# 军事委托「近一年」范围：含当月在内往前推的自然月数
+ANALYSIS_RECENT_MONTHS = 12
+
+# 大建详情：滚动中位数窗口（以池为单位，尾随窗口：含当前池在内往前 N 个）
+ANALYSIS_ROLLING_WINDOW = 10
+
+# 分位档位：分布标线与预算档位
+ANALYSIS_QUANTILES = (0.10, 0.25, 0.50, 0.75, 0.90)
+ANALYSIS_BUDGET_PERCENTILES = (0.50, 0.75, 0.90)
+ANALYSIS_BUDGET_LABELS = {0.50: "中位", 0.75: "偏高", 0.90: "极端"}
+
+# 毕业次数直方图的分箱宽度（次）
+ANALYSIS_HISTOGRAM_BIN = 20
+
+# 「军事委托」是资源类目字典里的自由文本名：在设置页改名后需同步这里
+MILITARY_COMMISSION_CATEGORY = "军事委托"
+
+# 大建分析的样本范围（只影响统计样本，不改变「只含毕业池」的口径）
+BUILD_SCOPE_ALL = "all"
+BUILD_SCOPE_EXCLUDE_WISH = "exclude_wish"
+BUILD_SCOPE_COPY = "copy"
+BUILD_SCOPE_WISH = "wish"
+BUILD_SCOPES = (
+    BUILD_SCOPE_ALL,
+    BUILD_SCOPE_EXCLUDE_WISH,
+    BUILD_SCOPE_COPY,
+    BUILD_SCOPE_WISH,
+)
+BUILD_SCOPE_TITLES = {
+    BUILD_SCOPE_ALL: "全部毕业池",
+    BUILD_SCOPE_EXCLUDE_WISH: "排除祈愿池",
+    BUILD_SCOPE_COPY: "仅复刻池",
+    BUILD_SCOPE_WISH: "仅祈愿池",
+}
+
+# 活动类型关键词：用于「复刻 / 祈愿 / 首次活动」分组（判定顺序：先复刻、再祈愿）
+EVENT_TYPE_KEYWORD_COPY = "复刻"
+EVENT_TYPE_KEYWORD_WISH = "祈愿"
+EVENT_TYPE_GROUP_OTHER = "首次活动"

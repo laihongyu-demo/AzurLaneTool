@@ -27,10 +27,13 @@ from services.cube_task_service import CubeTaskService, CubeTaskWriteResult
 from services.resource_service import ResourceService
 from services.resource_category_service import ResourceCategoryService
 from services.event_record_service import EventRecordService
+from services.resource_analysis_service import ResourceAnalysisService
+from services.build_pool_analysis_service import BuildPoolAnalysisService
 from views.widgets.statistics_panel import StatisticsPanel
 from views.widgets.ship_management_panel import ShipManagementPanel
 from views.widgets.resource_management_panel import ResourceManagementPanel
 from views.widgets.event_record_panel import EventRecordPanel
+from views.widgets.analysis_panel import AnalysisPanel
 from views.widgets.settings_panel import SettingsPanel
 from utils import time_source
 from utils.constants import (
@@ -60,7 +63,9 @@ class MainWindow(QMainWindow):
         cube_task_service: CubeTaskService = None,
         resource_service: ResourceService = None,
         category_service: ResourceCategoryService = None,
-        event_record_service: EventRecordService = None
+        event_record_service: EventRecordService = None,
+        analysis_service: ResourceAnalysisService = None,
+        build_pool_service: BuildPoolAnalysisService = None
     ):
         """
         初始化主窗口。
@@ -80,6 +85,8 @@ class MainWindow(QMainWindow):
             resource_service: 资源统计服务实例（只读）。
             category_service: 资源类型字典维护服务实例。
             event_record_service: 活动记录服务实例。
+            analysis_service: 资源分析服务实例（数据分析页签）。
+            build_pool_service: 大建分析服务实例（数据分析页签）。
         """
         super().__init__()
         self._data_service = data_service or DataService()
@@ -96,8 +103,11 @@ class MainWindow(QMainWindow):
         self._resource_service = resource_service or ResourceService()
         self._category_service = category_service or ResourceCategoryService()
         self._event_record_service = event_record_service or EventRecordService()
+        self._analysis_service = analysis_service or ResourceAnalysisService()
+        self._build_pool_service = build_pool_service or BuildPoolAnalysisService()
         self._last_seen_date = time_source.today()
         self._midnightTimer = None
+        self._analysisWarmUpStarted = False
 
         self._initUi()
         self._initMenuBar()
@@ -153,6 +163,12 @@ class MainWindow(QMainWindow):
 
         self._eventRecordPanel = EventRecordPanel(self._event_record_service)
         self._tabWidget.addTab(self._eventRecordPanel, "活动记录")
+
+        self._analysisPanel = AnalysisPanel(
+            analysis_service=self._analysis_service,
+            build_service=self._build_pool_service
+        )
+        self._tabWidget.addTab(self._analysisPanel, "数据分析")
 
         self._settingsPanel = SettingsPanel(category_service=self._category_service)
         self._tabWidget.addTab(self._settingsPanel, "设置")
@@ -263,7 +279,7 @@ class MainWindow(QMainWindow):
 
     def _panels(self):
         """
-        当前四个页签面板。
+        当前全部页签面板。
 
         Returns:
             面板元组。
@@ -273,6 +289,7 @@ class MainWindow(QMainWindow):
             self._shipManagementPanel,
             self._resourceManagementPanel,
             self._eventRecordPanel,
+            self._analysisPanel,
             self._settingsPanel,
         )
 
@@ -288,9 +305,13 @@ class MainWindow(QMainWindow):
             self._scheduleMidnightTick()
 
     def showEvent(self, event) -> None:
-        """窗口显示时检查是否已经跨天。"""
+        """窗口显示时检查是否已经跨天，并在空闲时预热图表依赖。"""
         super().showEvent(event)
         self._onWindowActivated()
+        if not self._analysisWarmUpStarted:
+            self._analysisWarmUpStarted = True
+            # 放到事件循环空闲：不拖慢启动，也不占用首帧绘制
+            QTimer.singleShot(0, self._analysisPanel.warmUpAsync)
 
     def changeEvent(self, event) -> None:
         """窗口激活事件：兜底处理休眠恢复跨天。"""
@@ -379,6 +400,8 @@ class MainWindow(QMainWindow):
             result: 写操作结果对象。
         """
         self._statusBar.showMessage(result.toStatusBarMessage())
+        # 任务完成 / 撤销会增删明细，趋势与委托统计都受影响
+        self._analysisPanel.refreshData()
 
     def _onResourceEntryResult(self, result) -> None:
         """
@@ -391,6 +414,8 @@ class MainWindow(QMainWindow):
         """
         self._statusBar.showMessage(result.toStatusBarMessage())
         self._eventRecordPanel.refreshData()
+        # 新明细会改变趋势、类目占比与委托产出
+        self._analysisPanel.refreshData()
 
     def _onEventRecordsChanged(self) -> None:
         """活动记录变化：让常规录入的「所属活动」下拉立即跟上。"""
@@ -404,10 +429,14 @@ class MainWindow(QMainWindow):
             result: `EventWriteResult` 实例。
         """
         self._statusBar.showMessage(result.toStatusBarMessage())
+        # 活动新增 / 编辑 / 删除会改变大建详情的样本与派生次数
+        self._analysisPanel.refreshData()
 
     def _onCategoriesChanged(self) -> None:
         """类型字典变化：让两个常规录入面板的下拉立即跟上。"""
         self._resourceManagementPanel.refreshEntryCategories()
+        # 改名会改变类目占比与委托区块的标签
+        self._analysisPanel.refreshData()
 
     def _onSettingsResult(self, result) -> None:
         """
@@ -434,6 +463,7 @@ class MainWindow(QMainWindow):
         self._shipManagementPanel.refreshData()
         self._resourceManagementPanel.refreshData()
         self._eventRecordPanel.refreshData()
+        self._analysisPanel.refreshData()
         self._settingsPanel.refreshData()
         self._last_seen_date = time_source.today()
 

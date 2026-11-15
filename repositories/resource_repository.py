@@ -523,6 +523,145 @@ class ResourceRepository(BaseRepository[ResourceDailyModel]):
             for row in results
         }
 
+    def findMonthlyCategoryTotals(
+        self, resource_type: str, direction: str, category: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        按「月份 × 类目」聚合明细金额与笔数。
+
+        月度类目占比（#19）与军事委托月度产出共用同一份聚合；``category`` 不为空时
+        只统计该类目，避免把全部类目都取回内存再过滤。
+
+        Args:
+            resource_type: 资源类型。
+            direction: 方向，``income`` 或 ``expense``。
+            category: 可选的类目名。
+
+        Returns:
+            字典列表，每项含 ``month``（``yyyy-MM``）、``category``、``count``、``amount``。
+
+        Raises:
+            DatabaseError: 当查询失败时抛出。
+        """
+        conditions = ["resource_type = ?", "direction = ?"]
+        params: List[Any] = [resource_type, direction]
+        if category:
+            conditions.append("category = ?")
+            params.append(category)
+        sql = f"""
+            SELECT substr(record_time, 1, 7) AS month,
+                   category,
+                   COUNT(*)    AS cnt,
+                   SUM(amount) AS total
+            FROM {self.TRANSACTION_TABLE}
+            WHERE {' AND '.join(conditions)}
+            GROUP BY month, category
+            ORDER BY month, category
+        """
+        try:
+            results = DatabaseConnection.executeQuery(sql, tuple(params))
+        except sqlite3.Error as e:
+            raise DatabaseError(f"按月度类目汇总资源明细失败: {e}")
+        return [
+            {
+                "month": row["month"],
+                "category": row["category"],
+                "count": int(row["cnt"] or 0),
+                "amount": int(row["total"] or 0),
+            }
+            for row in results
+        ]
+
+    def findCategoryAmountCounts(
+        self,
+        resource_type: str,
+        direction: str,
+        category: str,
+        start_month: Optional[str] = None,
+        end_month: Optional[str] = None,
+    ) -> List[Tuple[int, int]]:
+        """
+        按单笔金额聚合笔数（军事委托产出分布）。
+
+        Args:
+            resource_type: 资源类型。
+            direction: 方向。
+            category: 类目名。
+            start_month: 可选起始月 ``yyyy-MM``（含）。
+            end_month: 可选结束月 ``yyyy-MM``（含）。
+
+        Returns:
+            ``(单笔金额, 笔数)`` 列表，按金额升序。
+
+        Raises:
+            DatabaseError: 当查询失败时抛出。
+        """
+        conditions = ["resource_type = ?", "direction = ?", "category = ?"]
+        params: List[Any] = [resource_type, direction, category]
+        if start_month:
+            conditions.append("substr(record_time, 1, 7) >= ?")
+            params.append(start_month)
+        if end_month:
+            conditions.append("substr(record_time, 1, 7) <= ?")
+            params.append(end_month)
+        sql = f"""
+            SELECT amount, COUNT(*) AS cnt
+            FROM {self.TRANSACTION_TABLE}
+            WHERE {' AND '.join(conditions)}
+            GROUP BY amount
+            ORDER BY amount
+        """
+        try:
+            results = DatabaseConnection.executeQuery(sql, tuple(params))
+        except sqlite3.Error as e:
+            raise DatabaseError(f"按单笔金额汇总资源明细失败: {e}")
+        return [(int(row["amount"]), int(row["cnt"] or 0)) for row in results]
+
+    def countCategoryActiveDays(
+        self,
+        resource_type: str,
+        direction: str,
+        category: str,
+        start_month: Optional[str] = None,
+        end_month: Optional[str] = None,
+    ) -> int:
+        """
+        统计某类目「有记录」的天数（日均产出的分母）。
+
+        用有记录日而不是自然日：委托并非天天记录，按自然日平均会低估实际产出。
+
+        Args:
+            resource_type: 资源类型。
+            direction: 方向。
+            category: 类目名。
+            start_month: 可选起始月 ``yyyy-MM``（含）。
+            end_month: 可选结束月 ``yyyy-MM``（含）。
+
+        Returns:
+            有记录的天数；无记录时为 0。
+
+        Raises:
+            DatabaseError: 当查询失败时抛出。
+        """
+        conditions = ["resource_type = ?", "direction = ?", "category = ?"]
+        params: List[Any] = [resource_type, direction, category]
+        if start_month:
+            conditions.append("substr(record_time, 1, 7) >= ?")
+            params.append(start_month)
+        if end_month:
+            conditions.append("substr(record_time, 1, 7) <= ?")
+            params.append(end_month)
+        sql = f"""
+            SELECT COUNT(DISTINCT substr(record_time, 1, 10)) AS days
+            FROM {self.TRANSACTION_TABLE}
+            WHERE {' AND '.join(conditions)}
+        """
+        try:
+            results = DatabaseConnection.executeQuery(sql, tuple(params))
+            return int(results[0]["days"] or 0) if results else 0
+        except sqlite3.Error as e:
+            raise DatabaseError(f"统计类目有记录天数失败: {e}")
+
     def countDaily(self, resource_type: str) -> int:
         """
         统计日汇总行数。
