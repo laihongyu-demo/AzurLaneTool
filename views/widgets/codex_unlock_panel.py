@@ -16,7 +16,9 @@ from models.codex_model import CodexGroupModel
 from services.codex_unlock_service import CodexUnlockService, UnlockResult
 from services.codex_ship_create_service import CodexShipCreateService, ShipCreateResult
 from views.dialogs.codex_ship_create_dialog import CodexShipCreateDialog
+from views.widgets.panel_notice import PanelNoticeLabel
 from views.widgets.searchable_combo_box import SearchableComboBox
+from utils.error_messages import describeDataLoadError
 from utils.exceptions import DatabaseError, ValidationError
 
 
@@ -58,6 +60,10 @@ class CodexUnlockPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(15)
+
+        # 读库失败时就地提示：构造期弹模态框会阻塞主窗口构建（#28）
+        self._notice = PanelNoticeLabel(self)
+        layout.addWidget(self._notice)
 
         unlock_group = QGroupBox("舰娘解锁")
         unlock_layout = QVBoxLayout(unlock_group)
@@ -189,7 +195,12 @@ class CodexUnlockPanel(QWidget):
         self.refreshData()
 
     def refreshData(self) -> None:
-        """刷新界面数据。"""
+        """
+        刷新界面数据。
+
+        读取失败时在面板内提示而不是弹模态框：本方法在构造期就会被调用，
+        空库 / 缺表时不能阻塞主窗口构建（#28）。
+        """
         self._shipComboBox.clear()
         self._locked_ships = []
         self._clearShipInfo()
@@ -203,6 +214,8 @@ class CodexUnlockPanel(QWidget):
                 self._shipComboBox.addItem(display_name, ship.codex_id)
 
         except DatabaseError as e:
-            QMessageBox.critical(self, "数据库错误", f"加载数据失败: {e}")
+            self._notice.showError(describeDataLoadError(e))
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"刷新数据失败: {e}")
+            self._notice.showError(f"刷新数据失败：{e}")
+        else:
+            self._notice.clearError()
