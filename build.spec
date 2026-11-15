@@ -21,6 +21,8 @@ a = Analysis(
     datas=[
         ('sql', 'sql'),
         ('assets', 'assets'),
+        # 首次建库（#8）从该 CSV 播种 commander_level_exp；用户数据写在 exe 同目录 data/
+        ('data/commander_level.csv', 'data'),
     ],
     hiddenimports=[
         'PyQt5.sip',

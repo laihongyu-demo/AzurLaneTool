@@ -36,15 +36,21 @@ python -m pip install -r requirements.txt
 python main.py
 ```
 
-首次运行前请确认数据库存在：`data/AzurLaneStatisticalOfficeDB.db`。应用启动时会幂等补齐资源统计/魔方任务相关表；缺库时不会自动创建完整业务库。
+首次运行不需要准备数据库：`data/AzurLaneStatisticalOfficeDB.db` 不存在时，应用会自动建出空白模板
+（资源统计、任务看板、活动记录、贸易许可证、图鉴 4 表、指挥官快照），并写入类型字典、任务定义、
+等级经验基准与默认 `data/user.json`。已有数据库只做幂等结构升级，种子与人工维护的内容不会被覆盖。
+图鉴数据为空，可在「舰娘管理 → 新增舰娘」逐条录入。
 
 ### 3. 数据位置
 
 | 路径 | 说明 |
 |---|---|
-| `data/AzurLaneStatisticalOfficeDB.db` | 主数据库（不入 Git） |
+| `data/AzurLaneStatisticalOfficeDB.db` | 主数据库（不入 Git；首次运行自动创建） |
 | `data/backup/` | 数据备份（不入 Git） |
-| `data/user.json` | 本机用户数据，如执勤开始日期（不入 Git） |
+| `data/user.json` | 本机用户数据，如执勤开始日期（不入 Git；缺失时自动生成） |
+
+> 打包成单文件 exe 后，数据库与 `user.json` 落在 **exe 同目录的 `data/`**（可写、可备份）；
+> `sql/`、`assets/` 与等级经验 CSV 仍从程序资源目录读取。
 
 ## 测试
 
@@ -58,7 +64,7 @@ python -m unittest tests.test_time_refresh -v
 
 - Qt 测试使用 `QT_QPA_PLATFORM=offscreen`。
 - 测试使用临时数据库，不会读写 `data/` 下的真实库。
-- 截至 2026-10-19 基线：26 个测试文件、390 项通过。
+- 截至 2026-11-15 基线：50 个测试文件、756 项通过。
 
 ## 打包
 
